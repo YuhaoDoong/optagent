@@ -176,6 +176,13 @@ class MLDirectionAdapter:
             return None
         if not isinstance(blob, dict) or "model" not in blob or "trained_at" not in blob:
             return None
+        # Schema invalidation (Codex R4 finding): cache from an older model
+        # version or different feature schema must be retrained.
+        if blob.get("model_version") != MODEL_VERSION:
+            return None
+        cached_features = blob.get("feature_names")
+        if cached_features is not None and list(cached_features) != list(FEATURE_NAMES):
+            return None
         return blob
 
     def _save(self, path: Path, blob: dict[str, Any]) -> None:

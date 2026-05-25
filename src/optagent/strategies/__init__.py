@@ -19,9 +19,12 @@ from .base import (
     StrategySignal,
     BaseStrategy,
 )
+from .breakdown_continuation import BreakdownContinuation
+from .momentum_breakout import MomentumBreakout
 from .oversold_rebound import OversoldRebound
 from .registry import STRATEGY_REGISTRY, get_strategy, list_strategy_ids
 from .screen import ScreenResult, render_screen_report, screen_universe
+from .sectors import SECTOR_TICKERS, filter_to_sector, list_sectors, tickers_for_sector
 from .universe import (
     UniverseFilter,
     builtin_us_large_cap,
@@ -36,6 +39,12 @@ __all__ = [
     "SignalDirection",
     "StrategySignal",
     "OversoldRebound",
+    "MomentumBreakout",
+    "BreakdownContinuation",
+    "SECTOR_TICKERS",
+    "filter_to_sector",
+    "list_sectors",
+    "tickers_for_sector",
     "STRATEGY_REGISTRY",
     "get_strategy",
     "list_strategy_ids",

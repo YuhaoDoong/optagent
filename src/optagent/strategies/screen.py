@@ -107,7 +107,14 @@ def screen_universe(
     n_evaluated = 0
 
     for ticker in universe:
-        ohlcv, chain = fetcher(ticker)
+        # Wrap the fetcher itself so one upstream error doesn't kill the
+        # whole screen (Codex R4 finding — fetcher exceptions previously
+        # escaped uncaught).
+        try:
+            ohlcv, chain = fetcher(ticker)
+        except Exception as e:  # noqa: BLE001 - per-ticker robustness
+            skipped.append((ticker, f"fetcher_raised:{e.__class__.__name__}"))
+            continue
         if ohlcv is None:
             skipped.append((ticker, "no_ohlcv"))
             continue

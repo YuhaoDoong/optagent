@@ -104,6 +104,14 @@ class StrategySignal:
     notes: list[str] = field(default_factory=list)
     disclaimer: str = DISCLAIMER
 
+    def __post_init__(self) -> None:
+        # Enforce canonical disclaimer (Codex R4 finding). A strategy cannot
+        # ship a signal with an empty or altered disclaimer.
+        if self.disclaimer != DISCLAIMER:
+            # `frozen=True` means we can't `self.disclaimer = DISCLAIMER`;
+            # use object.__setattr__ to overwrite once, then it's frozen.
+            object.__setattr__(self, "disclaimer", DISCLAIMER)
+
     def to_dict(self) -> dict[str, Any]:
         def _coerce(value: Any) -> Any:
             """Make values JSON-serialisable. Walks dicts + lists; coerces

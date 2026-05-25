@@ -5,11 +5,15 @@ from __future__ import annotations
 from typing import Callable, Type
 
 from .base import BaseStrategy
+from .breakdown_continuation import BreakdownContinuation
+from .momentum_breakout import MomentumBreakout
 from .oversold_rebound import OversoldRebound
 
 
 STRATEGY_REGISTRY: dict[str, Type[BaseStrategy]] = {
     OversoldRebound.id: OversoldRebound,
+    MomentumBreakout.id: MomentumBreakout,
+    BreakdownContinuation.id: BreakdownContinuation,
 }
 
 

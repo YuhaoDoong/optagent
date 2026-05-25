@@ -93,7 +93,17 @@ def walk_forward_eval(
     Returns `None` when there isn't enough data for any meaningful fold
     (callers should fall back to in-sample only, with a low-credibility
     annotation in the audit ledger).
+
+    `gap >= horizon` is enforced fail-closed (Codex R4 finding): the
+    validation block must start at or after `train_end + horizon` so that
+    the last training label cannot leak forward into the validation set.
     """
+
+    if gap < horizon:
+        raise ValueError(
+            f"walk_forward_eval: gap ({gap}) must be >= horizon ({horizon}) to "
+            "prevent label leakage between train and validation"
+        )
 
     features = build_features(ohlcv)
     target = build_target(ohlcv["Close"].astype(float), horizon=horizon)

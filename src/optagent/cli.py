@@ -45,6 +45,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Either 'builtin' (default US large-cap list) or a path to a one-ticker-per-line file.",
     )
     screen_p.add_argument(
+        "--sector",
+        type=str,
+        default=None,
+        help=(
+            "Intersect the universe with a sector before screening. "
+            "See `optagent screen --list-sectors`."
+        ),
+    )
+    screen_p.add_argument(
+        "--list-sectors",
+        action="store_true",
+        help="Print the known sector keys and exit.",
+    )
+    screen_p.add_argument(
         "--limit",
         type=int,
         default=5,
@@ -142,11 +156,23 @@ def main(argv: list[str] | None = None) -> int:
         from . import DISCLAIMER
         from .strategies import (
             UniverseFilter,
+            filter_to_sector,
             get_strategy,
+            list_sectors,
+            list_strategy_ids,
             load_universe,
             render_screen_report,
             screen_universe,
         )
+
+        if args.list_sectors:
+            print("Available sectors:")
+            for s in list_sectors():
+                print(f"  {s}")
+            print("\nAvailable strategies:")
+            for sid in list_strategy_ids():
+                print(f"  {sid}")
+            return 0
 
         try:
             strategy = get_strategy(args.strategy)
@@ -155,6 +181,18 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         universe = load_universe(args.universe)
+        if args.sector is not None:
+            try:
+                universe = filter_to_sector(universe, args.sector)
+            except KeyError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
+            if not universe:
+                print(
+                    f"WARNING: sector '{args.sector}' has no overlap with the chosen universe.",
+                    file=sys.stderr,
+                )
+
         if args.min_market_cap is not None or args.min_avg_volume is not None:
             universe = UniverseFilter(
                 min_market_cap_usd=args.min_market_cap,
