@@ -18,10 +18,16 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from . import DISCLAIMER
-from .adapters import YFinanceAdapter
+from .adapters import (
+    EconCalendarAdapter,
+    FREDAdapter,
+    SECEdgarAdapter,
+    YFinanceAdapter,
+)
 from .budget import BudgetResult, precheck as budget_precheck
 from .ledger import append as ledger_append
 from .llm import LLMClient, SYNTHESIS_PROMPT_VERSION, synthesise
+from .profiles import ensure_default_profiles
 from .registry import ProviderRegistry
 from .render import render_template
 from .schemas import (
@@ -30,7 +36,6 @@ from .schemas import (
     Confidence,
     Envelope,
     OptionContract,
-    ProviderProfile,
     RunConfig,
     SkipReason,
     ValidatorDecision,
@@ -76,19 +81,11 @@ class AnalyzeResult:
         }
 
 
-def _build_yfinance_profile_if_missing(registry: ProviderRegistry) -> None:
-    try:
-        registry.get("yfinance_research")
-    except LookupError:
-        registry.register(
-            ProviderProfile(
-                id="yfinance_research",
-                permitted_use="research_only",  # type: ignore[arg-type]
-                redistribution="none",  # type: ignore[arg-type]
-                terms_url="https://pypi.org/project/yfinance/",
-                profile_version="2026-05-25",
-            )
-        )
+def _cites_fred(verdict: Verdict) -> bool:
+    return any(c.provider_profile_id == "fred_default" for c in verdict.citations)
+
+
+# profile registration is delegated to optagent.profiles.ensure_default_profiles
 
 
 def _build_skip_verdict(reason: SkipReason, primary_reasons: list[str]) -> Verdict:
@@ -134,6 +131,9 @@ def analyze(
     *,
     registry: ProviderRegistry | None = None,
     yfinance_adapter: YFinanceAdapter | None = None,
+    fred_adapter: FREDAdapter | None = None,
+    econ_calendar_adapter: EconCalendarAdapter | None = None,
+    sec_edgar_adapter: SECEdgarAdapter | None = None,
     horizon_days: int = 14,
     max_loss_usd: float | None = None,
     risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
@@ -159,7 +159,7 @@ def analyze(
 
     if registry is None:
         registry = ProviderRegistry()
-    _build_yfinance_profile_if_missing(registry)
+    ensure_default_profiles(registry)
 
     run_config = RunConfig(
         ticker=ticker,
@@ -175,12 +175,29 @@ def analyze(
 
     if yfinance_adapter is None:
         yfinance_adapter = YFinanceAdapter(registry)
+    if econ_calendar_adapter is None:
+        econ_calendar_adapter = EconCalendarAdapter(registry)
 
     price_env = yfinance_adapter.get_price(ticker)
     chain_env = yfinance_adapter.get_options_chain(
         ticker, min_dte=max(1, horizon_days // 2), max_dte=max(horizon_days * 3, 45)
     )
-    envelopes: list[Envelope] = [price_env, chain_env]
+    econ_env = econ_calendar_adapter.get_calendar()
+
+    fred_env: Envelope | None = None
+    if fred_adapter is not None:
+        fred_env = fred_adapter.get_macro()
+
+    sec_env: Envelope | None = None
+    if sec_edgar_adapter is not None:
+        sec_env = sec_edgar_adapter.get_recent_8k(ticker)
+
+    envelopes: list[Envelope] = [price_env, chain_env, econ_env]
+    if fred_env is not None:
+        envelopes.append(fred_env)
+    if sec_env is not None:
+        envelopes.append(sec_env)
+
     unavailable_warnings = [
         env.source for env in envelopes if env.confidence is Confidence.unavailable
     ]
@@ -198,7 +215,7 @@ def analyze(
                 if env.confidence is Confidence.unavailable
             ],
         )
-        memo = render_template(verdict, envelopes)
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -225,6 +242,14 @@ def analyze(
     dte = int(chain_value["dte"])
     spot = float(price_env.value["last"])
 
+    # Pull `days_to_event` from the calendar when available so the screener
+    # can drop contracts that bracket a FOMC/CPI/NFP print.
+    days_to_event: int | None = None
+    if econ_env.value is not None:
+        days_by_kind = econ_env.value.get("days_by_kind") or {}
+        if days_by_kind:
+            days_to_event = min(days_by_kind.values())
+
     screener_inputs = ScreenerInputs(
         ticker=ticker,
         spot=spot,
@@ -232,6 +257,7 @@ def analyze(
         expiration_str=expiration_str,
         dte=dte,
         risk_free_rate=risk_free_rate,
+        days_to_event=days_to_event,
         thresholds=ScreenerThresholds(
             min_dte=max(1, horizon_days // 2),
             max_dte=max(horizon_days * 3, 45),
@@ -244,7 +270,7 @@ def analyze(
             SkipReason.no_candidates_after_screen,
             ["Screener produced zero candidates after liquidity + DTE filters."],
         )
-        memo = render_template(verdict, envelopes)
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -326,7 +352,7 @@ def _run_template_only_path(
             "pass --enable-llm to let the LLM synthesise a verdict.",
         ],
     )
-    memo = render_template(verdict, envelopes)
+    memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
     return _finalize(
         run_config,
         verdict,
@@ -371,7 +397,7 @@ def _run_llm_path(
             SkipReason.unknown_model_pricing,
             ["No model_version supplied and price_table has no default_model."],
         )
-        memo = render_template(verdict, envelopes)
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -425,7 +451,7 @@ def _run_llm_path(
                 "Falling back to template_only behaviour for this run.",
             ],
         )
-        memo = render_template(verdict, envelopes)
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -456,7 +482,9 @@ def _run_llm_path(
         max_output_tokens=budget.max_output_tokens,
     )
 
-    pre_render = render_template(synthesis.verdict, envelopes)
+    pre_render = render_template(
+        synthesis.verdict, envelopes, cited_fred=_cites_fred(synthesis.verdict)
+    )
 
     outcome = validate(
         verdict=synthesis.verdict,
@@ -469,7 +497,9 @@ def _run_llm_path(
     )
 
     final_verdict = outcome.final_verdict
-    final_memo = render_template(final_verdict, envelopes)
+    final_memo = render_template(
+        final_verdict, envelopes, cited_fred=_cites_fred(final_verdict)
+    )
 
     return _finalize(
         run_config,

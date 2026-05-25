@@ -8,12 +8,15 @@ and validated by the AC-12 fail-closed validator.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from . import __version__
 from .config_loader import load_bundle
 from .orchestrator import analyze
+from .registry import ProviderRegistry
+from .profiles import ensure_default_profiles
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -61,6 +64,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the config directory (default: ./config).",
     )
+    analyze_p.add_argument(
+        "--no-fred",
+        action="store_true",
+        help="Skip the FRED macro adapter even if FRED_API_KEY is set.",
+    )
+    analyze_p.add_argument(
+        "--no-sec",
+        action="store_true",
+        help="Skip the SEC EDGAR adapter (also disabled if no User-Agent set).",
+    )
 
     return parser
 
@@ -92,8 +105,29 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"ERROR: --enable-llm but Anthropic SDK is unavailable: {e}", file=sys.stderr)
                 return 2
 
+        registry = ProviderRegistry()
+        ensure_default_profiles(registry)
+
+        fred_adapter = None
+        if not args.no_fred and os.environ.get("FRED_API_KEY"):
+            try:
+                from .adapters import FREDAdapter
+
+                fred_adapter = FREDAdapter(registry)
+            except Exception as e:  # noqa: BLE001
+                print(f"WARNING: FRED adapter disabled: {e}", file=sys.stderr)
+
+        sec_adapter = None
+        if not args.no_sec and os.environ.get("OPTAGENT_USER_AGENT"):
+            from .adapters import SECEdgarAdapter
+
+            sec_adapter = SECEdgarAdapter(registry)
+
         result = analyze(
             args.ticker.upper(),
+            registry=registry,
+            fred_adapter=fred_adapter,
+            sec_edgar_adapter=sec_adapter,
             horizon_days=args.horizon,
             max_loss_usd=args.max_loss,
             ledger_dir=args.ledger_dir,

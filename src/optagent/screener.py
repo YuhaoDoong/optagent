@@ -209,6 +209,7 @@ def screen(inp: ScreenerInputs, _run_config: RunConfig | None = None) -> Screene
             "expiration": inp.expiration_str,
             "dte": inp.dte,
             "risk_free_rate": inp.risk_free_rate,
+            "days_to_event": inp.days_to_event,
             "n_rows_in": len(inp.rows),
             "n_candidates": len(candidates),
             "n_rejected": len(rejected),
