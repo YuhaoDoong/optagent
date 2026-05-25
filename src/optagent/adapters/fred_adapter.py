@@ -38,6 +38,19 @@ SERIES_IDS: dict[str, str] = {
 }
 
 
+# Per-series source citation (FRED ToS expects each upstream source to be
+# named when republishing). Keys are FRED series ids (the values of
+# `SERIES_IDS`, NOT the friendly keys).
+SERIES_SOURCES: dict[str, str] = {
+    "DGS10": "Board of Governors of the Federal Reserve System (US)",
+    "DGS2": "Board of Governors of the Federal Reserve System (US)",
+    "VIXCLS": "Chicago Board Options Exchange (CBOE)",
+    "CPIAUCSL": "U.S. Bureau of Labor Statistics",
+    "FEDFUNDS": "Board of Governors of the Federal Reserve System (US)",
+    "DTWEXBGS": "Board of Governors of the Federal Reserve System (US)",
+}
+
+
 class FREDUnavailableError(RuntimeError):
     """Raised at adapter init when fredapi cannot be imported AND no client is injected."""
 
@@ -145,6 +158,7 @@ class FREDAdapter:
                     "series_id": series_id,
                     "value": latest_value,
                     "observation_date": ts_iso,
+                    "source": SERIES_SOURCES.get(series_id, "unknown"),
                 }
             except Exception as e:  # noqa: BLE001 - degrade, don't raise
                 warnings.append(f"{series_id}_fetch_failed:{e.__class__.__name__}")
@@ -152,5 +166,17 @@ class FREDAdapter:
         if not readings:
             return self._envelope(None, Confidence.unavailable, warnings or ["all_series_failed"])
 
+        # Aggregate per-series source attributions so the renderer / validator
+        # can surface them when the envelope is cited. Each entry is the
+        # canonical "<source>, via FRED" attribution.
+        series_attributions = sorted({
+            f"{r['source']}, retrieved from FRED (series {r['series_id']})"
+            for r in readings.values()
+        })
+
         confidence = Confidence.degraded if warnings else Confidence.ok
-        return self._envelope({"readings": readings}, confidence, warnings)
+        return self._envelope(
+            {"readings": readings, "series_attributions": series_attributions},
+            confidence,
+            warnings,
+        )

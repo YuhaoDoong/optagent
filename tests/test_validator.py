@@ -66,6 +66,17 @@ def _registry(run_mode="personal_research", moomoo_entitled=False) -> ProviderRe
     return r
 
 
+def _registry_with_full_profiles() -> ProviderRegistry:
+    """Registry that loads the v1 default profile catalogue (incl. required_notices)."""
+
+    from optagent.profiles import ensure_default_profiles
+
+    r = ProviderRegistry()
+    ensure_default_profiles(r)
+    r.bind(RunConfig(ticker="AAPL"))
+    return r
+
+
 def _price_env(tcid="tc-price", session=MarketSession.rth, age_seconds=1) -> Envelope:
     return Envelope(
         value={"last": 190.0},
@@ -280,6 +291,60 @@ def test_disclaimer_missing_fails_presence_check():
         now=UTC_NOW,
     )
     assert outcome.skip_reason is SkipReason.presence_check_failed
+
+
+def test_fred_non_endorsement_required_when_cited():
+    """ProviderProfile.required_notices: FRED non-endorsement must appear."""
+
+    contract = _contract()
+    chain = _chain_env()
+    fred_env = Envelope(
+        value={"readings": {}, "series_attributions": []},
+        as_of=UTC_NOW,
+        source="fred",
+        delay_assumption="eod",
+        market_session=MarketSession.rth,
+        confidence=Confidence.ok,
+        provider_profile_id="fred_default",
+        tool_call_id="tc-fred-1",
+    )
+    v = _long_verdict(
+        contract,
+        [
+            Citation(tool_call_id=chain.tool_call_id, provider_profile_id=chain.provider_profile_id),
+            Citation(tool_call_id=fred_env.tool_call_id, provider_profile_id=fred_env.provider_profile_id),
+        ],
+    )
+    # The default profile registered by _registry() has FRED required_notices
+    # populated. Render WITHOUT the notices block (cited_fred=False) to prove
+    # the validator catches the missing notice.
+    bad_render = render_template(v, [chain, fred_env, _price_env()], cited_fred=False)
+    outcome = validate(
+        verdict=v,
+        candidates=[contract],
+        envelopes=[chain, fred_env, _price_env()],
+        llm_tool_input=None,
+        registry=_registry_with_full_profiles(),
+        ttl_table=TTL_TABLE,
+        rendered_output=bad_render,
+        now=UTC_NOW,
+    )
+    assert outcome.skip_reason is SkipReason.presence_check_failed
+
+    # And the same setup WITH the notices block passes:
+    good_render = render_template(v, [chain, fred_env, _price_env()], cited_fred=True)
+    outcome2 = validate(
+        verdict=v,
+        candidates=[contract],
+        envelopes=[chain, fred_env, _price_env()],
+        llm_tool_input=None,
+        registry=_registry_with_full_profiles(),
+        ttl_table=TTL_TABLE,
+        rendered_output=good_render,
+        now=UTC_NOW,
+    )
+    assert outcome2.skip_reason is None
+    assert outcome2.final_verdict.action is VerdictAction.long_call
 
 
 def test_fred_citation_without_attribution_fails_presence():

@@ -20,6 +20,13 @@ from .schemas import (
 _BANNER = "=" * 72
 _DECLINED_VERDICT_PREFIXES = ("SHORT_", "IRON_", "STRADDLE", "STRANGLE", "NAKED_")
 
+# Delimiter strings the validator (h) uses to scope required-notice presence
+# checks. Notices outside this delimited block do NOT count toward presence —
+# this prevents an LLM from satisfying the check by writing the notice string
+# into its own rationale prose.
+NOTICES_BEGIN_MARKER = "--- REQUIRED PROVIDER NOTICES (renderer-emitted) ---"
+NOTICES_END_MARKER = "--- END REQUIRED PROVIDER NOTICES ---"
+
 
 def assert_supported_action(value: str | VerdictAction) -> VerdictAction:
     """Bounded-verdict guard. Raises on anything other than v1 enum members."""
@@ -108,20 +115,54 @@ def render_template(
                 f"profile={env.provider_profile_id}, as_of={env.as_of.isoformat()})"
             )
 
-    if cited_fred:
+    # Required notices are emitted INSIDE a delimited block so the validator
+    # can verify the renderer (not the LLM rationale) produced them.
+    if cited_fred or cited_volume_oi_context:
         lines.append("")
-        lines.append(
-            "Attribution: Data sourced from the Federal Reserve Bank of St. Louis (FRED)."
-        )
-
-    if cited_volume_oi_context:
-        lines.append("")
-        lines.append(
-            "Caveat: volume_oi_context is a derived supply/demand proxy and is NOT a "
-            "true holder cost-basis ('chip distribution') measure."
-        )
+        lines.append(NOTICES_BEGIN_MARKER)
+        if cited_fred:
+            lines.append("Required FRED notices:")
+            lines.append("  - Data sourced from the Federal Reserve Bank of St. Louis (FRED).")
+            lines.append(
+                "  - This product uses the FRED® API but is not endorsed or certified "
+                "by the Federal Reserve Bank of St. Louis."
+            )
+            series_attribs: list[str] = []
+            for env in envelopes:
+                if env.provider_profile_id != "fred_default":
+                    continue
+                value = env.value or {}
+                for attrib in (value.get("series_attributions") or []):
+                    if attrib not in series_attribs:
+                        series_attribs.append(attrib)
+            if series_attribs:
+                lines.append("  Per-series sources:")
+                for attrib in series_attribs:
+                    lines.append(f"    - {attrib}")
+        if cited_volume_oi_context:
+            lines.append(
+                "Caveat: volume_oi_context is a derived supply/demand proxy and is NOT a "
+                "true holder cost-basis ('chip distribution') measure."
+            )
+        lines.append(NOTICES_END_MARKER)
 
     return render_with_disclaimer("\n".join(lines))
+
+
+def extract_required_notices_block(rendered_output: str) -> str:
+    """Return only the substring between the notice-block delimiters.
+
+    Used by the validator's presence check so LLM rationale text cannot
+    satisfy the required-notice substring search.
+    """
+
+    start = rendered_output.find(NOTICES_BEGIN_MARKER)
+    if start < 0:
+        return ""
+    end = rendered_output.find(NOTICES_END_MARKER, start)
+    if end < 0:
+        return ""
+    return rendered_output[start:end]
 
 
 def _skip_reason_label(reason: SkipReason | None) -> str:

@@ -17,6 +17,10 @@ from .schemas import PermittedUse, ProviderProfile, Redistribution
 
 
 _FRED_ATTRIBUTION = "Data sourced from the Federal Reserve Bank of St. Louis (FRED)."
+_FRED_NON_ENDORSEMENT = (
+    "This product uses the FRED® API but is not endorsed or certified by "
+    "the Federal Reserve Bank of St. Louis."
+)
 
 
 _DEFAULT_PROFILES: list[ProviderProfile] = [
@@ -34,7 +38,8 @@ _DEFAULT_PROFILES: list[ProviderProfile] = [
         rate_limit_qpm=120,
         attribution_string=_FRED_ATTRIBUTION,
         terms_url="https://fred.stlouisfed.org/docs/api/terms_of_use.html",
-        profile_version="2026-05-25",
+        profile_version="2026-05-26",
+        required_notices=(_FRED_ATTRIBUTION, _FRED_NON_ENDORSEMENT),
     ),
     ProviderProfile(
         id="sec_edgar_default",

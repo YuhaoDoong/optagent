@@ -33,6 +33,7 @@ from typing import Mapping
 
 from . import DISCLAIMER
 from .registry import ProviderRegistry
+from .render import extract_required_notices_block
 from .schemas import (
     Confidence,
     Envelope,
@@ -184,7 +185,6 @@ def validate(
 
     now = now or datetime.now(timezone.utc)
     decisions: list[ValidatorDecision] = []
-    skip_reason_path: SkipReason | None = None
 
     # (a) verdict enum -------------------------------------------------------
     raw_action = getattr(verdict.action, "value", str(verdict.action))
@@ -215,7 +215,6 @@ def validate(
     if is_skip:
         if contract is not None:
             decisions.append(_decision("b_contract_match", False, "SKIP carries a contract"))
-            skip_reason_path = SkipReason.hallucinated_contract
         else:
             decisions.append(_decision("b_contract_match", True, "not_applicable: SKIP"))
     else:
@@ -308,7 +307,6 @@ def validate(
                     decisions=decisions,
                     skip_reason=SkipReason.phantom_citation,
                 )
-            skip_reason_path = skip_reason_path or SkipReason.phantom_citation
         else:
             decisions.append(_decision("c_citation_existence", True))
 
@@ -359,8 +357,6 @@ def validate(
             decisions=decisions,
             skip_reason=SkipReason.compliance_gate_failed,
         )
-    if not compliance_ok and is_skip:
-        skip_reason_path = skip_reason_path or SkipReason.compliance_gate_failed
 
     # ---- (f) staleness ----------------------------------------------------
     stale_detail = _check_staleness(envelopes, ttl_table, now=now)
@@ -392,7 +388,7 @@ def validate(
         decisions.append(_decision("g_strategy_scope", True))
 
     # ---- (h) presence ----------------------------------------------------
-    presence_ok, presence_detail = _check_presence(verdict, rendered_output)
+    presence_ok, presence_detail = _check_presence(verdict, rendered_output, registry)
     decisions.append(_decision("h_presence", presence_ok, presence_detail))
     if not presence_ok and not is_skip:
         return ValidationOutcome(
@@ -400,8 +396,6 @@ def validate(
             decisions=decisions,
             skip_reason=SkipReason.presence_check_failed,
         )
-    if not presence_ok and is_skip:
-        skip_reason_path = skip_reason_path or SkipReason.presence_check_failed
 
     # ---- (i) positive_path_gating ----------------------------------------
     if is_skip:
@@ -513,11 +507,40 @@ VOLUME_OI_REQUIRED_PHRASE = "holder cost-basis"
 
 
 def _check_presence(
-    verdict: Verdict, rendered_output: str
+    verdict: Verdict,
+    rendered_output: str,
+    registry: ProviderRegistry | None = None,
 ) -> tuple[bool, str | None]:
     if not rendered_output.lstrip().startswith(DISCLAIMER):
         return False, "disclaimer_missing"
     cited_profiles = {c.provider_profile_id for c in verdict.citations}
+
+    # Required notices are checked WITHIN the renderer's delimited notices
+    # block, not anywhere in the rendered output. This prevents the LLM from
+    # satisfying a presence check by writing the notice string into its own
+    # rationale prose.
+    notices_block = extract_required_notices_block(rendered_output)
+
+    # `required_notices` enforcement is fail-closed: if no registry is
+    # available, or if the registry is not bound, we cannot verify the
+    # provider's notices contract and so we refuse to call any cited verdict
+    # compliant. This applies whenever ANY profile is cited.
+    if cited_profiles:
+        if registry is None or not registry.is_bound():
+            return False, "registry_unavailable_cannot_verify_required_notices"
+        for pid in cited_profiles:
+            try:
+                profile = registry.get(pid)
+            except LookupError:
+                return False, f"unknown_profile_cited:{pid}"
+            for notice in profile.required_notices:
+                if notice not in notices_block:
+                    return False, f"required_notice_missing:{pid}:{notice[:40]}..."
+
+    # Legacy/explicit checks retained as belt-and-braces for the most critical
+    # anchors. The volume_oi caveat may live in the notices block; we also
+    # accept it anywhere case-insensitively for backwards compatibility with
+    # tests that don't trigger the renderer's delimited block.
     if (
         "fred_default" in cited_profiles
         and "Federal Reserve Bank of St. Louis" not in rendered_output

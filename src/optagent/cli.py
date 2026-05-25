@@ -129,8 +129,12 @@ def main(argv: list[str] | None = None) -> int:
         sec_adapter = None
         if not args.no_sec and os.environ.get("OPTAGENT_USER_AGENT"):
             from .adapters import SECEdgarAdapter
+            from .adapters.sec_edgar_adapter import SECUserAgentMissingError
 
-            sec_adapter = SECEdgarAdapter(registry)
+            try:
+                sec_adapter = SECEdgarAdapter(registry)
+            except SECUserAgentMissingError as e:
+                print(f"WARNING: SEC adapter disabled: {e}", file=sys.stderr)
 
         result = analyze(
             args.ticker.upper(),

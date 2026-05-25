@@ -68,6 +68,7 @@ def load_provider_profiles(path: Path) -> list[ProviderProfile]:
                 attribution_string=entry.get("attribution_string"),
                 terms_url=entry["terms_url"],
                 profile_version=str(entry["profile_version"]),
+                required_notices=tuple(entry.get("required_notices") or ()),
             )
         )
     return profiles

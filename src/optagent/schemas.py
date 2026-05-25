@@ -69,6 +69,11 @@ class ProviderProfile(BaseModel):
     """Compliance profile attached to every adapter, split BY LICENSE TIER.
 
     Identity is `id`; two tiers of the same provider are two distinct profiles.
+
+    `required_notices` is a list of plain-text substrings that MUST appear in
+    the rendered memo whenever any envelope from this profile is cited. The
+    renderer is responsible for emitting them; the validator's presence check
+    enforces them fail-closed.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -81,6 +86,7 @@ class ProviderProfile(BaseModel):
     attribution_string: str | None = None
     terms_url: str
     profile_version: str
+    required_notices: tuple[str, ...] = ()
 
     @field_validator("id")
     @classmethod
@@ -88,6 +94,15 @@ class ProviderProfile(BaseModel):
         if not v or " " in v:
             raise ValueError("ProviderProfile.id must be non-empty and contain no spaces")
         return v
+
+    @field_validator("required_notices", mode="before")
+    @classmethod
+    def _coerce_required_notices(cls, v):
+        if v is None:
+            return ()
+        if isinstance(v, str):
+            return (v,)
+        return tuple(v)
 
     @model_validator(mode="after")
     def _attribution_required_when_redistribution_attribution(self) -> "ProviderProfile":

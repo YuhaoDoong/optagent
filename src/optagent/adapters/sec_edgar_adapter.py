@@ -26,10 +26,17 @@ from ..schemas import Confidence, Envelope, MarketSession
 
 
 SEC_PROFILE_ID = "sec_edgar_default"
-DEFAULT_USER_AGENT_HINT = (
-    "optagent-research/0.0.1 (set OPTAGENT_USER_AGENT env var to your contact email)"
-)
 MIN_INTERVAL_S = 0.11  # 600 / 60 = 10 rps ceiling; we go slightly under
+
+
+class SECUserAgentMissingError(RuntimeError):
+    """Raised when `OPTAGENT_USER_AGENT` is not set and no explicit value passed.
+
+    SEC EDGAR developer guidance REQUIRES a descriptive User-Agent that
+    identifies the requester (company / contact email). The adapter
+    fail-closes rather than sending a placeholder, which could be flagged
+    or rate-limited by SEC's fair-access system.
+    """
 
 
 def _utc_now() -> datetime:
@@ -82,11 +89,17 @@ class SECEdgarAdapter:
 
         self._registry = registry
         self._now = now
-        self._user_agent = (
-            user_agent
-            or os.environ.get("OPTAGENT_USER_AGENT")
-            or DEFAULT_USER_AGENT_HINT
-        )
+        ua = user_agent or os.environ.get("OPTAGENT_USER_AGENT")
+        if not ua or "@" not in ua:
+            # SEC requires a descriptive UA with contact info; an @-bearing
+            # email is the canonical form. Fail-closed rather than degrade.
+            raise SECUserAgentMissingError(
+                "SECEdgarAdapter requires a descriptive User-Agent with contact "
+                "info. Set OPTAGENT_USER_AGENT env var like "
+                "'optagent/0.x (you@example.com)' or pass user_agent=... to the "
+                "constructor."
+            )
+        self._user_agent = ua
         self._rate_limiter = rate_limiter or _RateLimiter(MIN_INTERVAL_S)
         self._http_get = http_get or self._default_http_get
         self._ticker_cache: dict[str, str] | None = None

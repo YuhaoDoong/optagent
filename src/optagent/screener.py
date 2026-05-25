@@ -11,6 +11,7 @@ liquidity_score DESC, days_to_event ASC, occ_symbol ASC).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
@@ -40,8 +41,10 @@ class ScreenerThresholds:
     # Delta-band actionability gate. |delta| outside [min_abs_delta, max_abs_delta]
     # is rejected so lottery-deep-OTM and synthetic-stock-deep-ITM contracts
     # don't pass. Set min_abs_delta=0.0 to disable the lower bound.
-    min_abs_delta: float = 0.20
-    max_abs_delta: float = 0.80
+    # 0.15 default avoids the round-0.20 cliff Codex flagged (TSLA 450C
+    # delta=0.1984 etc. were getting dropped categorically).
+    min_abs_delta: float = 0.15
+    max_abs_delta: float = 0.85
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,13 @@ def _eval_one(
     except (TypeError, ValueError):
         return None, "missing_field"
 
+    # NaN/Inf in any numeric input -> reject with a clear reason rather than
+    # letting the values flow through into NaN Greeks / NaN payoff math.
+    if not all(math.isfinite(x) for x in (bid, ask, strike, raw_iv)):
+        return None, "invalid_quote"
+    if not math.isfinite(inp.spot) or inp.spot <= 0:
+        return None, "invalid_spot"
+
     if bid == 0 and ask == 0:
         return None, "zero_bid"
     if bid < 0 or ask < 0:
@@ -137,6 +147,12 @@ def _eval_one(
     g = pricing.greeks(
         right, inp.spot, strike, t_years, inp.risk_free_rate, sigma, inp.dividend_yield
     )
+
+    # Defensive: if anything in the Greeks pipeline produced a non-finite
+    # value (extreme inputs, numerical overflow), reject before it can flow
+    # into the audit ledger or LLM prompt.
+    if not all(math.isfinite(g[k]) for k in ("delta", "theta", "vega")):
+        return None, "invalid_greeks"
 
     # Actionability filter: deep-OTM lotteries and deep-ITM proxies don't help.
     abs_delta = abs(g["delta"])
@@ -265,6 +281,8 @@ def screen(inp: ScreenerInputs, _run_config: RunConfig | None = None) -> Screene
                 "max_spread_pct": thr.max_spread_pct,
                 "min_dte": thr.min_dte,
                 "max_dte": thr.max_dte,
+                "min_abs_delta": thr.min_abs_delta,
+                "max_abs_delta": thr.max_abs_delta,
             },
         },
     )
