@@ -64,12 +64,19 @@ def _bollinger_lower(close: pd.Series, period: int = 20, k: float = 2.0) -> pd.S
     return ma - k * sd
 
 
-def _consecutive_down(close: pd.Series, n: int = 4) -> int:
-    """Count the trailing run of negative daily returns."""
+def _consecutive_down_excl_latest(close: pd.Series, n: int = 4) -> int:
+    """Count the trailing run of negative daily returns EXCLUDING the latest bar.
 
-    if len(close) < 2:
+    The latest bar is reserved for the `stop_bleed` check; including it here
+    creates a logical contradiction (Codex R4 finding): consec_down_pass and
+    stop_bleed cannot both be true if both reference the latest close.
+    """
+
+    if len(close) < 3:
         return 0
-    rets = close.diff().tail(n + 5).fillna(0.0).to_numpy()
+    # Use close[:-1] so the lead-in down run is counted, then stop_bleed
+    # (latest > prior) is allowed to be the rebound signal.
+    rets = close.iloc[:-1].diff().tail(n + 5).fillna(0.0).to_numpy()
     count = 0
     for r in rets[::-1]:
         if r < 0:
@@ -150,7 +157,7 @@ class OversoldRebound(BaseStrategy):
         rsi = float(rsi_series.iloc[-1])
         wr = float(wr_series.iloc[-1])
         ema20_dev = (latest_close - ema20) / ema20 if ema20 > 0 else 0.0
-        consec_down = _consecutive_down(close, n=self.min_consec_down + 2)
+        consec_down = _consecutive_down_excl_latest(close, n=self.min_consec_down + 2)
 
         daily_conditions: dict[str, object] = {
             "rsi_14": round(rsi, 2),
@@ -267,14 +274,16 @@ class OversoldRebound(BaseStrategy):
         )
 
         # Score: oversold depth + reward bounded by the configured band cap.
-        # Higher RSI/WR distance below threshold → higher score. Capped at 1.0.
-        rsi_term = max(0.0, (self.rsi_max - rsi) / max(self.rsi_max, 1.0))
-        wr_term = max(0.0, (self.wr_max - wr) / max(abs(self.wr_max), 1.0))
+        # Codex R4 fix: WR term was under-scaled (max ~0.176 against the
+        # advertised 0.30 weight). Rescale against the deepening band
+        # [wr_max, -100] so a -99 reading saturates the term.
+        rsi_term = max(0.0, min(self.rsi_max - rsi, self.rsi_max) / max(self.rsi_max, 1.0))
+        wr_term = max(0.0, min((self.wr_max - wr) / max(abs(-100.0 - self.wr_max), 1.0), 1.0))
         reward_term = max(0.0, min(repair_pct / self.reward_band[1], 1.0))
-        score = round(0.45 * rsi_term + 0.3 * wr_term + 0.25 * reward_term, 4)
+        score = round(min(0.45 * rsi_term + 0.3 * wr_term + 0.25 * reward_term, 1.0), 4)
         if direction is SignalDirection.skip:
             # Still emit the score so we can sort "almost-triggers" for inspection.
-            score *= 0.25
+            score = round(score * 0.25, 4)
 
         return StrategySignal(
             strategy_id=self.id,

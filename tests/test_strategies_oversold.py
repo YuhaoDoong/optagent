@@ -29,10 +29,20 @@ def _ohlcv(closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame({"Open": open_, "High": high, "Low": low, "Close": close, "Volume": vol}, index=idx)
 
 
-def _flat_then_crash(flat_n: int = 70, crash_n: int = 10) -> pd.DataFrame:
+def _flat_then_crash(flat_n: int = 70, crash_n: int = 10, slope: float = 1.2) -> pd.DataFrame:
     flat = [100.0] * flat_n
-    crash = [100.0 - i * 1.2 for i in range(1, crash_n + 1)]
+    crash = [100.0 - i * slope for i in range(1, crash_n + 1)]
     return _ohlcv(flat + crash)
+
+
+def _gentle_oversold(flat_n: int = 70, fade_n: int = 8, slope: float = 0.5) -> pd.DataFrame:
+    """Smooth slow-bleed setup so ATR doesn't explode but RSI/WR/EMA20 dev
+    still print oversold readings. Used by the full-trigger regression test.
+    """
+
+    flat = [100.0] * flat_n
+    fade = [100.0 - i * slope for i in range(1, fade_n + 1)]
+    return _ohlcv(flat + fade)
 
 
 def _strong_uptrend(n: int = 80) -> pd.DataFrame:
@@ -57,6 +67,43 @@ def test_oversold_fires_on_crash_setup():
     # may not satisfy stop_bleed (latest close < prior close). Allow either
     # SKIP or LONG_CALL but score must be > 0.
     assert sig.score > 0
+
+
+def test_oversold_fires_on_gentle_fade_with_rebound_bar():
+    """Codex R4 regression: the full trigger must be REACHABLE.
+
+    The original logic counted the latest bar in `consec_down` AND required
+    `stop_bleed = latest > prior`, which are mutually exclusive. The fix
+    counts consec_down on close[:-1] so this scenario triggers.
+    """
+
+    df = _gentle_oversold(flat_n=70, fade_n=8, slope=0.5)
+    # Append a single rebound bar after the fade.
+    last_idx = df.index[-1]
+    last_close = float(df["Close"].iloc[-1])
+    rebound_close = last_close * 1.003
+    new_row = pd.DataFrame(
+        {
+            "Open": [last_close],
+            "High": [rebound_close * 1.001],
+            "Low": [last_close * 0.999],
+            "Close": [rebound_close],
+            "Volume": [1_000_000.0],
+        },
+        index=[last_idx + pd.tseries.offsets.BDay()],
+    )
+    df2 = pd.concat([df, new_row])
+
+    sig = OversoldRebound().evaluate("TEST", ohlcv_daily=df2)
+    assert sig is not None
+    conds = sig.daily.conditions
+    assert conds["consec_down_pass"] is True, "lead-in down-run must count after fix"
+    # The intraday block uses latest > prior as the stop_bleed proxy.
+    assert sig.intraday is not None
+    assert sig.intraday.conditions["stop_bleed"] is True, "stop_bleed must be reachable after fix"
+    # The exact direction depends on ATR / repair-band — but the two
+    # CRITICAL conditions (consec_down AND stop_bleed) are now both True,
+    # which the pre-fix code made impossible.
 
 
 def test_oversold_does_not_fire_on_uptrend():
