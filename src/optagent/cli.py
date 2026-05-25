@@ -81,6 +81,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the SEC EDGAR adapter (also disabled if no User-Agent set).",
     )
+    analyze_p.add_argument(
+        "--no-news",
+        action="store_true",
+        help="Skip the Yahoo News adapter even when yfinance is installed.",
+    )
 
     return parser
 
@@ -136,11 +141,18 @@ def main(argv: list[str] | None = None) -> int:
             except SECUserAgentMissingError as e:
                 print(f"WARNING: SEC adapter disabled: {e}", file=sys.stderr)
 
+        news_adapter = None
+        if not args.no_news:
+            from .adapters import YahooNewsAdapter
+
+            news_adapter = YahooNewsAdapter(registry)
+
         result = analyze(
             args.ticker.upper(),
             registry=registry,
             fred_adapter=fred_adapter,
             sec_edgar_adapter=sec_adapter,
+            news_adapter=news_adapter,
             horizon_days=args.horizon,
             max_loss_usd=args.max_loss,
             ledger_dir=args.ledger_dir,

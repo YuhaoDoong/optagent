@@ -1,0 +1,383 @@
+{
+  "ticker": "AAPL",
+  "frozen_now": "2026-05-25T07:22:10.304021+00:00",
+  "yfinance_price": {
+    "ticker": "AAPL",
+    "last": 308.82000732421875
+  },
+  "yfinance_history": {
+    "ticker": "AAPL",
+    "last_close": 308.82000732421875,
+    "recent_high_60d": 308.82000732421875,
+    "recent_low_60d": 246.6300048828125,
+    "hv20_annual": 0.1853122156148928,
+    "n_returns_used": 20
+  },
+  "yfinance_chain": {
+    "ticker": "AAPL",
+    "expiration": "2026-06-01",
+    "dte": 7,
+    "rows": [
+      {
+        "occ_symbol": "AAPL260601C00255000",
+        "strike": 255.0,
+        "right": "call",
+        "bid": 52.55,
+        "ask": 55.85,
+        "last_price": 54.02,
+        "volume": 1,
+        "open_interest": 0,
+        "iv": 0.7041045214843751
+      },
+      {
+        "occ_symbol": "AAPL260601C00260000",
+        "strike": 260.0,
+        "right": "call",
+        "bid": 47.55,
+        "ask": 50.75,
+        "last_price": 49.55,
+        "volume": 1,
+        "open_interest": 0,
+        "iv": 0.6279334082031252
+      },
+      {
+        "occ_symbol": "AAPL260601C00280000",
+        "strike": 280.0,
+        "right": "call",
+        "bid": 27.65,
+        "ask": 30.8,
+        "last_price": 29.7,
+        "volume": 1,
+        "open_interest": 39,
+        "iv": 0.6206092626953126
+      },
+      {
+        "occ_symbol": "AAPL260601C00290000",
+        "strike": 290.0,
+        "right": "call",
+        "bid": 17.8,
+        "ask": 20.05,
+        "last_price": 19.84,
+        "volume": 21,
+        "open_interest": 27,
+        "iv": 0.3918517846679687
+      },
+      {
+        "occ_symbol": "AAPL260601C00295000",
+        "strike": 295.0,
+        "right": "call",
+        "bid": 14.05,
+        "ask": 15.35,
+        "last_price": 14.25,
+        "volume": 65,
+        "open_interest": 48,
+        "iv": 0.3425358715820312
+      },
+      {
+        "occ_symbol": "AAPL260601C00300000",
+        "strike": 300.0,
+        "right": "call",
+        "bid": 9.6,
+        "ask": 10.7,
+        "last_price": 10.35,
+        "volume": 437,
+        "open_interest": 174,
+        "iv": 0.28516339843749994
+      },
+      {
+        "occ_symbol": "AAPL260601C00305000",
+        "strike": 305.0,
+        "right": "call",
+        "bid": 5.8,
+        "ask": 6.55,
+        "last_price": 6.25,
+        "volume": 370,
+        "open_interest": 726,
+        "iv": 0.24146266357421875
+      },
+      {
+        "occ_symbol": "AAPL260601C00310000",
+        "strike": 310.0,
+        "right": "call",
+        "bid": 3.0,
+        "ask": 3.45,
+        "last_price": 3.15,
+        "volume": 1022,
+        "open_interest": 609,
+        "iv": 0.2196122961425781
+      },
+      {
+        "occ_symbol": "AAPL260601C00315000",
+        "strike": 315.0,
+        "right": "call",
+        "bid": 1.34,
+        "ask": 1.66,
+        "last_price": 1.5,
+        "volume": 677,
+        "open_interest": 300,
+        "iv": 0.2180253979492187
+      },
+      {
+        "occ_symbol": "AAPL260601C00320000",
+        "strike": 320.0,
+        "right": "call",
+        "bid": 0.42,
+        "ask": 0.69,
+        "last_price": 0.69,
+        "volume": 452,
+        "open_interest": 857,
+        "iv": 0.2176591906738281
+      },
+      {
+        "occ_symbol": "AAPL260601C00325000",
+        "strike": 325.0,
+        "right": "call",
+        "bid": 0.15,
+        "ask": 0.25,
+        "last_price": 0.22,
+        "volume": 199,
+        "open_interest": 50,
+        "iv": 0.21826953613281247
+      },
+      {
+        "occ_symbol": "AAPL260601C00330000",
+        "strike": 330.0,
+        "right": "call",
+        "bid": 0.06,
+        "ask": 0.22,
+        "last_price": 0.08,
+        "volume": 123,
+        "open_interest": 101,
+        "iv": 0.2617261328125
+      },
+      {
+        "occ_symbol": "AAPL260601C00335000",
+        "strike": 335.0,
+        "right": "call",
+        "bid": 0.0,
+        "ask": 0.12,
+        "last_price": 0.04,
+        "volume": 2,
+        "open_interest": 10,
+        "iv": 0.278327529296875
+      },
+      {
+        "occ_symbol": "AAPL260601C00340000",
+        "strike": 340.0,
+        "right": "call",
+        "bid": 0.0,
+        "ask": 0.15,
+        "last_price": 0.27,
+        "volume": 2,
+        "open_interest": 1,
+        "iv": 0.331061376953125
+      },
+      {
+        "occ_symbol": "AAPL260601C00345000",
+        "strike": 345.0,
+        "right": "call",
+        "bid": 0.0,
+        "ask": 0.24,
+        "last_price": 0.26,
+        "volume": 1,
+        "open_interest": 0,
+        "iv": 0.4028380029296875
+      },
+      {
+        "occ_symbol": "AAPL260601P00275000",
+        "strike": 275.0,
+        "right": "put",
+        "bid": 0.01,
+        "ask": 0.2,
+        "last_price": 0.05,
+        "volume": 14,
+        "open_interest": 80,
+        "iv": 0.41358008300781246
+      },
+      {
+        "occ_symbol": "AAPL260601P00280000",
+        "strike": 280.0,
+        "right": "put",
+        "bid": 0.08,
+        "ask": 0.15,
+        "last_price": 0.15,
+        "volume": 19,
+        "open_interest": 115,
+        "iv": 0.34180345703125
+      },
+      {
+        "occ_symbol": "AAPL260601P00285000",
+        "strike": 285.0,
+        "right": "put",
+        "bid": 0.11,
+        "ask": 0.27,
+        "last_price": 0.14,
+        "volume": 10,
+        "open_interest": 126,
+        "iv": 0.32227240234374993
+      },
+      {
+        "occ_symbol": "AAPL260601P00290000",
+        "strike": 290.0,
+        "right": "put",
+        "bid": 0.2,
+        "ask": 0.29,
+        "last_price": 0.21,
+        "volume": 96,
+        "open_interest": 132,
+        "iv": 0.2688061401367187
+      },
+      {
+        "occ_symbol": "AAPL260601P00295000",
+        "strike": 295.0,
+        "right": "put",
+        "bid": 0.4,
+        "ask": 0.57,
+        "last_price": 0.44,
+        "volume": 223,
+        "open_interest": 348,
+        "iv": 0.24878680908203127
+      },
+      {
+        "occ_symbol": "AAPL260601P00300000",
+        "strike": 300.0,
+        "right": "put",
+        "bid": 0.83,
+        "ask": 1.08,
+        "last_price": 0.89,
+        "volume": 1682,
+        "open_interest": 350,
+        "iv": 0.22534954345703123
+      },
+      {
+        "occ_symbol": "AAPL260601P00305000",
+        "strike": 305.0,
+        "right": "put",
+        "bid": 1.94,
+        "ask": 2.22,
+        "last_price": 1.95,
+        "volume": 551,
+        "open_interest": 117,
+        "iv": 0.21131159790039059
+      },
+      {
+        "occ_symbol": "AAPL260601P00310000",
+        "strike": 310.0,
+        "right": "put",
+        "bid": 4.05,
+        "ask": 4.45,
+        "last_price": 3.99,
+        "volume": 280,
+        "open_interest": 19,
+        "iv": 0.20972469970703123
+      },
+      {
+        "occ_symbol": "AAPL260601P00315000",
+        "strike": 315.0,
+        "right": "put",
+        "bid": 7.05,
+        "ask": 7.9,
+        "last_price": 7.16,
+        "volume": 66,
+        "open_interest": 4,
+        "iv": 0.2219316088867187
+      },
+      {
+        "occ_symbol": "AAPL260601P00320000",
+        "strike": 320.0,
+        "right": "put",
+        "bid": 10.65,
+        "ask": 13.05,
+        "last_price": 11.27,
+        "volume": 28,
+        "open_interest": 5,
+        "iv": 0.3142158422851562
+      },
+      {
+        "occ_symbol": "AAPL260601P00325000",
+        "strike": 325.0,
+        "right": "put",
+        "bid": 15.1,
+        "ask": 17.6,
+        "last_price": 16.75,
+        "volume": 15,
+        "open_interest": 0,
+        "iv": 0.3513248461914062
+      }
+    ]
+  },
+  "econ_calendar": {
+    "next_event": {
+      "date": "2026-06-06",
+      "kind": "NFP",
+      "label": "Nonfarm payrolls"
+    },
+    "days_to_next_event": 12,
+    "days_by_kind": {
+      "NFP": 12,
+      "CPI": 17,
+      "PPI": 18,
+      "FOMC": 23,
+      "GDP": 32
+    },
+    "next_by_kind": {
+      "NFP": {
+        "date": "2026-06-06",
+        "label": "Nonfarm payrolls"
+      },
+      "CPI": {
+        "date": "2026-06-11",
+        "label": "CPI release"
+      },
+      "PPI": {
+        "date": "2026-06-12",
+        "label": "PPI release"
+      },
+      "FOMC": {
+        "date": "2026-06-17",
+        "label": "FOMC meeting + SEP"
+      },
+      "GDP": {
+        "date": "2026-06-26",
+        "label": "GDP Q1 third estimate"
+      }
+    }
+  },
+  "fred_macro": null,
+  "sec_recent_8k": {
+    "ticker": "AAPL",
+    "cik": "0000320193",
+    "recent_8k": [
+      {
+        "form": "8-K",
+        "filing_date": "2026-04-30",
+        "accession": "0000320193-26-000011",
+        "primary_document": "aapl-20260430.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-04-20",
+        "accession": "0001140361-26-015711",
+        "primary_document": "ef20071035_8k.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-02-24",
+        "accession": "0001140361-26-006577",
+        "primary_document": "ef20060722_8k.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-01-29",
+        "accession": "0000320193-26-000005",
+        "primary_document": "aapl-20260129.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-01-02",
+        "accession": "0001140361-26-000199",
+        "primary_document": "ef20060722_8k.htm"
+      }
+    ]
+  }
+}

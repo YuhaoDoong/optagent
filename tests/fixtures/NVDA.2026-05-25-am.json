@@ -1,0 +1,999 @@
+{
+  "ticker": "NVDA",
+  "frozen_now": "2026-05-25T07:22:10.304021+00:00",
+  "yfinance_price": {
+    "ticker": "NVDA",
+    "last": 215.3300018310547
+  },
+  "yfinance_history": {
+    "ticker": "NVDA",
+    "last_close": 215.3300018310547,
+    "recent_high_60d": 235.74000549316406,
+    "recent_low_60d": 165.1699981689453,
+    "hv20_annual": 0.4328152850198826,
+    "n_returns_used": 20
+  },
+  "yfinance_chain": {
+    "ticker": "NVDA",
+    "expiration": "2026-06-01",
+    "dte": 7,
+    "rows": [
+      {
+        "occ_symbol": "NVDA260601C00165000",
+        "strike": 165.0,
+        "right": "call",
+        "bid": 46.6,
+        "ask": 54.65,
+        "last_price": 52.85,
+        "volume": 7,
+        "open_interest": 0,
+        "iv": 0.948242705078125
+      },
+      {
+        "occ_symbol": "NVDA260601C00180000",
+        "strike": 180.0,
+        "right": "call",
+        "bid": 33.6,
+        "ask": 36.0,
+        "last_price": 35.65,
+        "volume": 1,
+        "open_interest": 3,
+        "iv": 0.8017597949218749
+      },
+      {
+        "occ_symbol": "NVDA260601C00185000",
+        "strike": 185.0,
+        "right": "call",
+        "bid": 28.7,
+        "ask": 33.0,
+        "last_price": 31.12,
+        "volume": 9,
+        "open_interest": 13,
+        "iv": 0.6640658593750002
+      },
+      {
+        "occ_symbol": "NVDA260601C00187500",
+        "strike": 187.5,
+        "right": "call",
+        "bid": 25.65,
+        "ask": 30.6,
+        "last_price": 29.24,
+        "volume": 8,
+        "open_interest": 8,
+        "iv": 0.5483443603515626
+      },
+      {
+        "occ_symbol": "NVDA260601C00190000",
+        "strike": 190.0,
+        "right": "call",
+        "bid": 23.8,
+        "ask": 28.05,
+        "last_price": 25.94,
+        "volume": 18,
+        "open_interest": 3,
+        "iv": 0.5883830224609375
+      },
+      {
+        "occ_symbol": "NVDA260601C00192500",
+        "strike": 192.5,
+        "right": "call",
+        "bid": 21.4,
+        "ask": 23.75,
+        "last_price": 24.14,
+        "volume": 302,
+        "open_interest": 9,
+        "iv": 0.6049844189453126
+      },
+      {
+        "occ_symbol": "NVDA260601C00195000",
+        "strike": 195.0,
+        "right": "call",
+        "bid": 20.8,
+        "ask": 21.45,
+        "last_price": 20.97,
+        "volume": 58,
+        "open_interest": 46,
+        "iv": 0.5307664111328125
+      },
+      {
+        "occ_symbol": "NVDA260601C00197500",
+        "strike": 197.5,
+        "right": "call",
+        "bid": 18.1,
+        "ask": 19.1,
+        "last_price": 19.03,
+        "volume": 301,
+        "open_interest": 6,
+        "iv": 0.5539595385742189
+      },
+      {
+        "occ_symbol": "NVDA260601C00200000",
+        "strike": 200.0,
+        "right": "call",
+        "bid": 15.8,
+        "ask": 16.75,
+        "last_price": 16.85,
+        "volume": 146,
+        "open_interest": 108,
+        "iv": 0.5178270874023438
+      },
+      {
+        "occ_symbol": "NVDA260601C00202500",
+        "strike": 202.5,
+        "right": "call",
+        "bid": 13.7,
+        "ask": 14.5,
+        "last_price": 14.25,
+        "volume": 14,
+        "open_interest": 6,
+        "iv": 0.48950705810546885
+      },
+      {
+        "occ_symbol": "NVDA260601C00205000",
+        "strike": 205.0,
+        "right": "call",
+        "bid": 11.7,
+        "ask": 12.35,
+        "last_price": 12.35,
+        "volume": 431,
+        "open_interest": 34,
+        "iv": 0.46533737792968755
+      },
+      {
+        "occ_symbol": "NVDA260601C00207500",
+        "strike": 207.5,
+        "right": "call",
+        "bid": 9.7,
+        "ask": 10.3,
+        "last_price": 10.28,
+        "volume": 2743,
+        "open_interest": 31,
+        "iv": 0.4426325268554688
+      },
+      {
+        "occ_symbol": "NVDA260601C00210000",
+        "strike": 210.0,
+        "right": "call",
+        "bid": 7.9,
+        "ask": 8.3,
+        "last_price": 8.19,
+        "volume": 164,
+        "open_interest": 102,
+        "iv": 0.4145566357421875
+      },
+      {
+        "occ_symbol": "NVDA260601C00212500",
+        "strike": 212.5,
+        "right": "call",
+        "bid": 6.4,
+        "ask": 6.65,
+        "last_price": 6.55,
+        "volume": 90,
+        "open_interest": 20,
+        "iv": 0.40454697021484376
+      },
+      {
+        "occ_symbol": "NVDA260601C00215000",
+        "strike": 215.0,
+        "right": "call",
+        "bid": 5.0,
+        "ask": 5.25,
+        "last_price": 5.1,
+        "volume": 1211,
+        "open_interest": 428,
+        "iv": 0.4000304138183594
+      },
+      {
+        "occ_symbol": "NVDA260601C00217500",
+        "strike": 217.5,
+        "right": "call",
+        "bid": 3.85,
+        "ask": 3.95,
+        "last_price": 4.0,
+        "volume": 2316,
+        "open_interest": 288,
+        "iv": 0.3880676428222656
+      },
+      {
+        "occ_symbol": "NVDA260601C00220000",
+        "strike": 220.0,
+        "right": "call",
+        "bid": 2.98,
+        "ask": 3.05,
+        "last_price": 3.06,
+        "volume": 4228,
+        "open_interest": 2377,
+        "iv": 0.3924621301269531
+      },
+      {
+        "occ_symbol": "NVDA260601C00222500",
+        "strike": 222.5,
+        "right": "call",
+        "bid": 2.23,
+        "ask": 2.31,
+        "last_price": 2.34,
+        "volume": 1865,
+        "open_interest": 1442,
+        "iv": 0.3957579956054688
+      },
+      {
+        "occ_symbol": "NVDA260601C00225000",
+        "strike": 225.0,
+        "right": "call",
+        "bid": 1.71,
+        "ask": 1.76,
+        "last_price": 1.79,
+        "volume": 2271,
+        "open_interest": 2740,
+        "iv": 0.40259386474609377
+      },
+      {
+        "occ_symbol": "NVDA260601C00227500",
+        "strike": 227.5,
+        "right": "call",
+        "bid": 1.3,
+        "ask": 1.33,
+        "last_price": 1.33,
+        "volume": 1388,
+        "open_interest": 813,
+        "iv": 0.4094297338867187
+      },
+      {
+        "occ_symbol": "NVDA260601C00230000",
+        "strike": 230.0,
+        "right": "call",
+        "bid": 1.0,
+        "ask": 1.03,
+        "last_price": 1.03,
+        "volume": 3186,
+        "open_interest": 1645,
+        "iv": 0.4204159521484375
+      },
+      {
+        "occ_symbol": "NVDA260601C00232500",
+        "strike": 232.5,
+        "right": "call",
+        "bid": 0.76,
+        "ask": 0.81,
+        "last_price": 0.76,
+        "volume": 1171,
+        "open_interest": 1149,
+        "iv": 0.4331111376953125
+      },
+      {
+        "occ_symbol": "NVDA260601C00235000",
+        "strike": 235.0,
+        "right": "call",
+        "bid": 0.6,
+        "ask": 0.63,
+        "last_price": 0.64,
+        "volume": 1547,
+        "open_interest": 1441,
+        "iv": 0.44385321777343745
+      },
+      {
+        "occ_symbol": "NVDA260601C00237500",
+        "strike": 237.5,
+        "right": "call",
+        "bid": 0.47,
+        "ask": 0.51,
+        "last_price": 0.5,
+        "volume": 176,
+        "open_interest": 152,
+        "iv": 0.4585015087890626
+      },
+      {
+        "occ_symbol": "NVDA260601C00240000",
+        "strike": 240.0,
+        "right": "call",
+        "bid": 0.38,
+        "ask": 0.4,
+        "last_price": 0.39,
+        "volume": 1542,
+        "open_interest": 1635,
+        "iv": 0.4687553125
+      },
+      {
+        "occ_symbol": "NVDA260601C00242500",
+        "strike": 242.5,
+        "right": "call",
+        "bid": 0.3,
+        "ask": 0.33,
+        "last_price": 0.3,
+        "volume": 885,
+        "open_interest": 363,
+        "iv": 0.48340360351562506
+      },
+      {
+        "occ_symbol": "NVDA260601C00245000",
+        "strike": 245.0,
+        "right": "call",
+        "bid": 0.24,
+        "ask": 0.26,
+        "last_price": 0.25,
+        "volume": 2625,
+        "open_interest": 40434,
+        "iv": 0.4931691308593751
+      },
+      {
+        "occ_symbol": "NVDA260601C00247500",
+        "strike": 247.5,
+        "right": "call",
+        "bid": 0.2,
+        "ask": 0.22,
+        "last_price": 0.2,
+        "volume": 240,
+        "open_interest": 202,
+        "iv": 0.5048877636718749
+      },
+      {
+        "occ_symbol": "NVDA260601C00250000",
+        "strike": 250.0,
+        "right": "call",
+        "bid": 0.17,
+        "ask": 0.18,
+        "last_price": 0.18,
+        "volume": 1142,
+        "open_interest": 1900,
+        "iv": 0.5185595019531251
+      },
+      {
+        "occ_symbol": "NVDA260601C00252500",
+        "strike": 252.5,
+        "right": "call",
+        "bid": 0.13,
+        "ask": 0.15,
+        "last_price": 0.13,
+        "volume": 40,
+        "open_interest": 498,
+        "iv": 0.5283250292968751
+      },
+      {
+        "occ_symbol": "NVDA260601C00255000",
+        "strike": 255.0,
+        "right": "call",
+        "bid": 0.1,
+        "ask": 0.13,
+        "last_price": 0.11,
+        "volume": 406,
+        "open_interest": 457,
+        "iv": 0.5390671093750001
+      },
+      {
+        "occ_symbol": "NVDA260601C00257500",
+        "strike": 257.5,
+        "right": "call",
+        "bid": 0.09,
+        "ask": 0.11,
+        "last_price": 0.09,
+        "volume": 265,
+        "open_interest": 232,
+        "iv": 0.5546919531250001
+      },
+      {
+        "occ_symbol": "NVDA260601C00260000",
+        "strike": 260.0,
+        "right": "call",
+        "bid": 0.06,
+        "ask": 0.08,
+        "last_price": 0.08,
+        "volume": 611,
+        "open_interest": 35146,
+        "iv": 0.55273884765625
+      },
+      {
+        "occ_symbol": "NVDA260601C00262500",
+        "strike": 262.5,
+        "right": "call",
+        "bid": 0.05,
+        "ask": 0.08,
+        "last_price": 0.07,
+        "volume": 17,
+        "open_interest": 215,
+        "iv": 0.570316796875
+      },
+      {
+        "occ_symbol": "NVDA260601C00265000",
+        "strike": 265.0,
+        "right": "call",
+        "bid": 0.04,
+        "ask": 0.07,
+        "last_price": 0.06,
+        "volume": 64,
+        "open_interest": 840,
+        "iv": 0.5820354296875
+      },
+      {
+        "occ_symbol": "NVDA260601C00267500",
+        "strike": 267.5,
+        "right": "call",
+        "bid": 0.03,
+        "ask": 0.06,
+        "last_price": 0.03,
+        "volume": 19,
+        "open_interest": 93,
+        "iv": 0.5898478515625001
+      },
+      {
+        "occ_symbol": "NVDA260601C00270000",
+        "strike": 270.0,
+        "right": "call",
+        "bid": 0.03,
+        "ask": 0.05,
+        "last_price": 0.04,
+        "volume": 44,
+        "open_interest": 150,
+        "iv": 0.6054726953125001
+      },
+      {
+        "occ_symbol": "NVDA260601C00272500",
+        "strike": 272.5,
+        "right": "call",
+        "bid": 0.02,
+        "ask": 0.04,
+        "last_price": 0.06,
+        "volume": 2,
+        "open_interest": 19,
+        "iv": 0.6093789062500001
+      },
+      {
+        "occ_symbol": "NVDA260601C00275000",
+        "strike": 275.0,
+        "right": "call",
+        "bid": 0.02,
+        "ask": 0.04,
+        "last_price": 0.03,
+        "volume": 44,
+        "open_interest": 165,
+        "iv": 0.6289099609375001
+      },
+      {
+        "occ_symbol": "NVDA260601C00277500",
+        "strike": 277.5,
+        "right": "call",
+        "bid": 0.01,
+        "ask": 0.04,
+        "last_price": 0.04,
+        "volume": 3,
+        "open_interest": 27,
+        "iv": 0.6367223828125
+      },
+      {
+        "occ_symbol": "NVDA260601C00280000",
+        "strike": 280.0,
+        "right": "call",
+        "bid": 0.01,
+        "ask": 0.03,
+        "last_price": 0.04,
+        "volume": 13,
+        "open_interest": 165,
+        "iv": 0.64062859375
+      },
+      {
+        "occ_symbol": "NVDA260601C00282500",
+        "strike": 282.5,
+        "right": "call",
+        "bid": 0.01,
+        "ask": 0.03,
+        "last_price": 0.03,
+        "volume": 2,
+        "open_interest": 45,
+        "iv": 0.6640658593750002
+      },
+      {
+        "occ_symbol": "NVDA260601C00285000",
+        "strike": 285.0,
+        "right": "call",
+        "bid": 0.01,
+        "ask": 0.02,
+        "last_price": 0.02,
+        "volume": 161,
+        "open_interest": 348,
+        "iv": 0.6640658593750002
+      },
+      {
+        "occ_symbol": "NVDA260601C00290000",
+        "strike": 290.0,
+        "right": "call",
+        "bid": 0.01,
+        "ask": 0.02,
+        "last_price": 0.01,
+        "volume": 6,
+        "open_interest": 111,
+        "iv": 0.6953155468750001
+      },
+      {
+        "occ_symbol": "NVDA260601C00295000",
+        "strike": 295.0,
+        "right": "call",
+        "bid": 0.0,
+        "ask": 0.02,
+        "last_price": 0.01,
+        "volume": 6,
+        "open_interest": 96,
+        "iv": 0.70312796875
+      },
+      {
+        "occ_symbol": "NVDA260601C00297500",
+        "strike": 297.5,
+        "right": "call",
+        "bid": 0.0,
+        "ask": 0.02,
+        "last_price": 0.01,
+        "volume": 101,
+        "open_interest": 82,
+        "iv": 0.726565234375
+      },
+      {
+        "occ_symbol": "NVDA260601P00155000",
+        "strike": 155.0,
+        "right": "put",
+        "bid": 0.02,
+        "ask": 0.05,
+        "last_price": 0.04,
+        "volume": 17,
+        "open_interest": 119,
+        "iv": 0.85937640625
+      },
+      {
+        "occ_symbol": "NVDA260601P00160000",
+        "strike": 160.0,
+        "right": "put",
+        "bid": 0.03,
+        "ask": 0.06,
+        "last_price": 0.04,
+        "volume": 5,
+        "open_interest": 1,
+        "iv": 0.804689453125
+      },
+      {
+        "occ_symbol": "NVDA260601P00162500",
+        "strike": 162.5,
+        "right": "put",
+        "bid": 0.04,
+        "ask": 0.06,
+        "last_price": 0.05,
+        "volume": 5,
+        "open_interest": 40,
+        "iv": 0.7773459765625
+      },
+      {
+        "occ_symbol": "NVDA260601P00165000",
+        "strike": 165.0,
+        "right": "put",
+        "bid": 0.04,
+        "ask": 0.07,
+        "last_price": 0.05,
+        "volume": 5,
+        "open_interest": 4,
+        "iv": 0.7460962890625
+      },
+      {
+        "occ_symbol": "NVDA260601P00170000",
+        "strike": 170.0,
+        "right": "put",
+        "bid": 0.06,
+        "ask": 0.09,
+        "last_price": 0.07,
+        "volume": 22,
+        "open_interest": 428,
+        "iv": 0.6972686523437501
+      },
+      {
+        "occ_symbol": "NVDA260601P00172500",
+        "strike": 172.5,
+        "right": "put",
+        "bid": 0.07,
+        "ask": 0.1,
+        "last_price": 0.08,
+        "volume": 8,
+        "open_interest": 24,
+        "iv": 0.6699251757812501
+      },
+      {
+        "occ_symbol": "NVDA260601P00175000",
+        "strike": 175.0,
+        "right": "put",
+        "bid": 0.09,
+        "ask": 0.11,
+        "last_price": 0.09,
+        "volume": 23,
+        "open_interest": 428,
+        "iv": 0.64648791015625
+      },
+      {
+        "occ_symbol": "NVDA260601P00177500",
+        "strike": 177.5,
+        "right": "put",
+        "bid": 0.1,
+        "ask": 0.11,
+        "last_price": 0.14,
+        "volume": 3,
+        "open_interest": 124,
+        "iv": 0.6123085644531252
+      },
+      {
+        "occ_symbol": "NVDA260601P00180000",
+        "strike": 180.0,
+        "right": "put",
+        "bid": 0.12,
+        "ask": 0.13,
+        "last_price": 0.13,
+        "volume": 141,
+        "open_interest": 300,
+        "iv": 0.5888712988281251
+      },
+      {
+        "occ_symbol": "NVDA260601P00182500",
+        "strike": 182.5,
+        "right": "put",
+        "bid": 0.14,
+        "ask": 0.17,
+        "last_price": 0.14,
+        "volume": 9,
+        "open_interest": 37,
+        "iv": 0.56836369140625
+      },
+      {
+        "occ_symbol": "NVDA260601P00185000",
+        "strike": 185.0,
+        "right": "put",
+        "bid": 0.17,
+        "ask": 0.18,
+        "last_price": 0.17,
+        "volume": 14,
+        "open_interest": 178,
+        "iv": 0.5390671093750001
+      },
+      {
+        "occ_symbol": "NVDA260601P00187500",
+        "strike": 187.5,
+        "right": "put",
+        "bid": 0.2,
+        "ask": 0.24,
+        "last_price": 0.2,
+        "volume": 2,
+        "open_interest": 13,
+        "iv": 0.5195360546875
+      },
+      {
+        "occ_symbol": "NVDA260601P00190000",
+        "strike": 190.0,
+        "right": "put",
+        "bid": 0.25,
+        "ask": 0.28,
+        "last_price": 0.27,
+        "volume": 92,
+        "open_interest": 278,
+        "iv": 0.500005
+      },
+      {
+        "occ_symbol": "NVDA260601P00192500",
+        "strike": 192.5,
+        "right": "put",
+        "bid": 0.33,
+        "ask": 0.36,
+        "last_price": 0.34,
+        "volume": 52,
+        "open_interest": 87,
+        "iv": 0.481450498046875
+      },
+      {
+        "occ_symbol": "NVDA260601P00195000",
+        "strike": 195.0,
+        "right": "put",
+        "bid": 0.42,
+        "ask": 0.46,
+        "last_price": 0.45,
+        "volume": 100,
+        "open_interest": 431,
+        "iv": 0.46191944335937507
+      },
+      {
+        "occ_symbol": "NVDA260601P00197500",
+        "strike": 197.5,
+        "right": "put",
+        "bid": 0.55,
+        "ask": 0.6,
+        "last_price": 0.56,
+        "volume": 84,
+        "open_interest": 88,
+        "iv": 0.44434149414062496
+      },
+      {
+        "occ_symbol": "NVDA260601P00200000",
+        "strike": 200.0,
+        "right": "put",
+        "bid": 0.74,
+        "ask": 0.77,
+        "last_price": 0.76,
+        "volume": 608,
+        "open_interest": 1013,
+        "iv": 0.42456630126953127
+      },
+      {
+        "occ_symbol": "NVDA260601P00202500",
+        "strike": 202.5,
+        "right": "put",
+        "bid": 1.0,
+        "ask": 1.05,
+        "last_price": 1.04,
+        "volume": 139,
+        "open_interest": 88,
+        "iv": 0.41260353027343744
+      },
+      {
+        "occ_symbol": "NVDA260601P00205000",
+        "strike": 205.0,
+        "right": "put",
+        "bid": 1.38,
+        "ask": 1.44,
+        "last_price": 1.39,
+        "volume": 954,
+        "open_interest": 845,
+        "iv": 0.40259386474609377
+      },
+      {
+        "occ_symbol": "NVDA260601P00207500",
+        "strike": 207.5,
+        "right": "put",
+        "bid": 1.89,
+        "ask": 1.94,
+        "last_price": 1.82,
+        "volume": 637,
+        "open_interest": 355,
+        "iv": 0.39172971557617187
+      },
+      {
+        "occ_symbol": "NVDA260601P00210000",
+        "strike": 210.0,
+        "right": "put",
+        "bid": 2.58,
+        "ask": 2.64,
+        "last_price": 2.58,
+        "volume": 919,
+        "open_interest": 610,
+        "iv": 0.38587039916992183
+      },
+      {
+        "occ_symbol": "NVDA260601P00212500",
+        "strike": 212.5,
+        "right": "put",
+        "bid": 3.45,
+        "ask": 3.55,
+        "last_price": 3.45,
+        "volume": 237,
+        "open_interest": 178,
+        "iv": 0.38269660278320305
+      },
+      {
+        "occ_symbol": "NVDA260601P00215000",
+        "strike": 215.0,
+        "right": "put",
+        "bid": 4.45,
+        "ask": 4.7,
+        "last_price": 4.45,
+        "volume": 902,
+        "open_interest": 467,
+        "iv": 0.38281867187499996
+      },
+      {
+        "occ_symbol": "NVDA260601P00217500",
+        "strike": 217.5,
+        "right": "put",
+        "bid": 5.8,
+        "ask": 6.05,
+        "last_price": 5.8,
+        "volume": 652,
+        "open_interest": 318,
+        "iv": 0.3825745336914062
+      },
+      {
+        "occ_symbol": "NVDA260601P00220000",
+        "strike": 220.0,
+        "right": "put",
+        "bid": 7.1,
+        "ask": 7.65,
+        "last_price": 7.29,
+        "volume": 719,
+        "open_interest": 663,
+        "iv": 0.38672488281249995
+      },
+      {
+        "occ_symbol": "NVDA260601P00222500",
+        "strike": 222.5,
+        "right": "put",
+        "bid": 8.75,
+        "ask": 9.4,
+        "last_price": 9.47,
+        "volume": 142,
+        "open_interest": 457,
+        "iv": 0.38843385009765624
+      },
+      {
+        "occ_symbol": "NVDA260601P00225000",
+        "strike": 225.0,
+        "right": "put",
+        "bid": 10.7,
+        "ask": 11.45,
+        "last_price": 11.0,
+        "volume": 84,
+        "open_interest": 189,
+        "iv": 0.40479110839843746
+      },
+      {
+        "occ_symbol": "NVDA260601P00227500",
+        "strike": 227.5,
+        "right": "put",
+        "bid": 12.7,
+        "ask": 13.85,
+        "last_price": 13.2,
+        "volume": 152,
+        "open_interest": 72,
+        "iv": 0.4484918432617187
+      },
+      {
+        "occ_symbol": "NVDA260601P00230000",
+        "strike": 230.0,
+        "right": "put",
+        "bid": 15.2,
+        "ask": 15.85,
+        "last_price": 15.22,
+        "volume": 182,
+        "open_interest": 77,
+        "iv": 0.43994700683593746
+      },
+      {
+        "occ_symbol": "NVDA260601P00232500",
+        "strike": 232.5,
+        "right": "put",
+        "bid": 17.15,
+        "ask": 18.4,
+        "last_price": 17.4,
+        "volume": 15,
+        "open_interest": 17,
+        "iv": 0.49268085449218757
+      },
+      {
+        "occ_symbol": "NVDA260601P00235000",
+        "strike": 235.0,
+        "right": "put",
+        "bid": 19.5,
+        "ask": 20.75,
+        "last_price": 18.1,
+        "volume": 1,
+        "open_interest": 16,
+        "iv": 0.5161181201171875
+      },
+      {
+        "occ_symbol": "NVDA260601P00237500",
+        "strike": 237.5,
+        "right": "put",
+        "bid": 21.9,
+        "ask": 22.9,
+        "last_price": 20.48,
+        "volume": 2,
+        "open_interest": 35,
+        "iv": 0.5012256909179689
+      },
+      {
+        "occ_symbol": "NVDA260601P00240000",
+        "strike": 240.0,
+        "right": "put",
+        "bid": 24.25,
+        "ask": 25.55,
+        "last_price": 22.36,
+        "volume": 45,
+        "open_interest": 51,
+        "iv": 0.5666547241210937
+      },
+      {
+        "occ_symbol": "NVDA260601P00245000",
+        "strike": 245.0,
+        "right": "put",
+        "bid": 27.75,
+        "ask": 31.7,
+        "last_price": 28.62,
+        "volume": 2,
+        "open_interest": 2,
+        "iv": 0.8168963623046874
+      },
+      {
+        "occ_symbol": "NVDA260601P00247500",
+        "strike": 247.5,
+        "right": "put",
+        "bid": 30.2,
+        "ask": 34.25,
+        "last_price": 30.6,
+        "volume": 3,
+        "open_interest": 4,
+        "iv": 0.8654798608398437
+      },
+      {
+        "occ_symbol": "NVDA260601P00287500",
+        "strike": 287.5,
+        "right": "put",
+        "bid": 69.9,
+        "ask": 74.4,
+        "last_price": 71.83,
+        "volume": 10,
+        "open_interest": 0,
+        "iv": 1.456545686035156
+      }
+    ]
+  },
+  "econ_calendar": {
+    "next_event": {
+      "date": "2026-06-06",
+      "kind": "NFP",
+      "label": "Nonfarm payrolls"
+    },
+    "days_to_next_event": 12,
+    "days_by_kind": {
+      "NFP": 12,
+      "CPI": 17,
+      "PPI": 18,
+      "FOMC": 23,
+      "GDP": 32
+    },
+    "next_by_kind": {
+      "NFP": {
+        "date": "2026-06-06",
+        "label": "Nonfarm payrolls"
+      },
+      "CPI": {
+        "date": "2026-06-11",
+        "label": "CPI release"
+      },
+      "PPI": {
+        "date": "2026-06-12",
+        "label": "PPI release"
+      },
+      "FOMC": {
+        "date": "2026-06-17",
+        "label": "FOMC meeting + SEP"
+      },
+      "GDP": {
+        "date": "2026-06-26",
+        "label": "GDP Q1 third estimate"
+      }
+    }
+  },
+  "fred_macro": null,
+  "sec_recent_8k": {
+    "ticker": "NVDA",
+    "cik": "0001045810",
+    "recent_8k": [
+      {
+        "form": "8-K",
+        "filing_date": "2026-05-20",
+        "accession": "0001045810-26-000051",
+        "primary_document": "nvda-20260520.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-05-08",
+        "accession": "0001045810-26-000028",
+        "primary_document": "nvda-20260507.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-04-27",
+        "accession": "0001045810-26-000026",
+        "primary_document": "nvda-20260424.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-03-06",
+        "accession": "0001045810-26-000024",
+        "primary_document": "nvda-20260302.htm"
+      },
+      {
+        "form": "8-K",
+        "filing_date": "2026-02-25",
+        "accession": "0001045810-26-000019",
+        "primary_document": "nvda-20260225.htm"
+      }
+    ]
+  }
+}

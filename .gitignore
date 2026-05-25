@@ -18,6 +18,7 @@ env/
 # Data / ledger / artifacts
 data/ledger/
 data/cache/
+data/iv_history/
 *.parquet
 *.pkl
 

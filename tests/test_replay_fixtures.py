@@ -24,16 +24,14 @@ from optagent.replay import Fixture, replay
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures"
 
-TICKERS = ("SPY", "QQQ", "AAPL", "NVDA", "TSLA")
+
+def _all_fixtures() -> list[Path]:
+    return sorted(FIXTURE_DIR.glob("*.json"))
 
 
-def _path_for(ticker: str) -> Path:
-    return FIXTURE_DIR / f"{ticker}.json"
-
-
-@pytest.fixture(params=TICKERS)
+@pytest.fixture(params=_all_fixtures(), ids=lambda p: p.name)
 def fixture_path(request) -> Path:
-    p = _path_for(request.param)
+    p = request.param
     if not p.exists():
         pytest.skip(f"fixture missing: {p}; run scripts/capture_fixtures.py")
     return p

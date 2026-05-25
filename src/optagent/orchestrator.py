@@ -23,9 +23,16 @@ from .adapters import (
     FREDAdapter,
     SECEdgarAdapter,
     VolumeOIContextAdapter,
+    YahooNewsAdapter,
     YFinanceAdapter,
+    news_excerpts_from_envelope,
 )
 from .budget import BudgetResult, precheck as budget_precheck
+from .iv_history import (
+    append_snapshot as iv_history_append,
+    compute_iv_rank,
+    median_iv_from_chain_rows,
+)
 from .ledger import append as ledger_append
 from .llm import LLMClient, SYNTHESIS_PROMPT_VERSION, synthesise
 from .profiles import ensure_default_profiles
@@ -142,6 +149,7 @@ def analyze(
     econ_calendar_adapter: EconCalendarAdapter | None = None,
     sec_edgar_adapter: SECEdgarAdapter | None = None,
     volume_oi_adapter: VolumeOIContextAdapter | None = None,
+    news_adapter: YahooNewsAdapter | None = None,
     horizon_days: int = 14,
     max_loss_usd: float | None = None,
     risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
@@ -207,11 +215,17 @@ def analyze(
     if sec_edgar_adapter is not None:
         sec_env = sec_edgar_adapter.get_recent_8k(ticker)
 
+    news_env: Envelope | None = None
+    if news_adapter is not None:
+        news_env = news_adapter.get_news(ticker)
+
     envelopes: list[Envelope] = [price_env, chain_env, history_env, econ_env, voi_env]
     if fred_env is not None:
         envelopes.append(fred_env)
     if sec_env is not None:
         envelopes.append(sec_env)
+    if news_env is not None:
+        envelopes.append(news_env)
 
     unavailable_warnings = [
         env.source for env in envelopes if env.confidence is Confidence.unavailable
@@ -269,6 +283,19 @@ def analyze(
     if history_env.confidence is not Confidence.unavailable and history_env.value:
         hv20_annual = float(history_env.value.get("hv20_annual") or 0.0) or None
 
+    # Persist + look up IV history so the audit ledger / screener can surface
+    # an IV-rank percentile when enough observations exist.
+    atm_iv_today = median_iv_from_chain_rows(rows)
+    iv_rank_summary: dict | None = None
+    if atm_iv_today is not None:
+        iv_history_append(
+            ticker,
+            atm_iv_median=atm_iv_today,
+            hv20_annual=hv20_annual,
+            as_of=started_at,
+        )
+        iv_rank_summary = compute_iv_rank(ticker, current_iv=atm_iv_today)
+
     screener_inputs = ScreenerInputs(
         ticker=ticker,
         spot=spot,
@@ -278,6 +305,7 @@ def analyze(
         risk_free_rate=risk_free_rate,
         days_to_event=days_to_event,
         hv20_annual=hv20_annual,
+        iv_rank_summary=iv_rank_summary,
         thresholds=ScreenerThresholds(
             min_dte=max(1, horizon_days // 2),
             max_dte=max(horizon_days * 3, 45),
@@ -491,6 +519,12 @@ def _run_llm_path(
             fallback_reason=budget.fallback_reason,
         )
 
+    # Build news / SEC excerpts under prompt-injection delimiters.
+    news_excerpts: list[tuple[str, str]] = []
+    for env in envelopes:
+        if env.source == "yahoo_news":
+            news_excerpts.extend(news_excerpts_from_envelope(env))
+
     # Synthesis
     synthesis = synthesise(
         client=llm_client,
@@ -499,6 +533,7 @@ def _run_llm_path(
         spot=spot,
         candidates=screener_output.candidates,
         envelopes=envelopes,
+        news_excerpts=news_excerpts or None,
         max_output_tokens=budget.max_output_tokens,
     )
 

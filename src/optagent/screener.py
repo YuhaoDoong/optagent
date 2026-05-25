@@ -60,6 +60,7 @@ class ScreenerInputs:
     dividend_yield: float = 0.0
     days_to_event: int | None = None  # min(days_to_earnings, days_to_FOMC) etc.
     hv20_annual: float | None = None  # annualised 20-day realised vol (decimal)
+    iv_rank_summary: dict | None = None  # see optagent.iv_history.compute_iv_rank
     thresholds: ScreenerThresholds = ScreenerThresholds()
 
 
@@ -272,6 +273,7 @@ def screen(inp: ScreenerInputs, _run_config: RunConfig | None = None) -> Screene
             "days_to_event": inp.days_to_event,
             "hv20_annual": inp.hv20_annual,
             "iv_richness_summary": _iv_richness_summary(candidates, inp.hv20_annual),
+            "iv_rank_summary": inp.iv_rank_summary,
             "n_rows_in": len(inp.rows),
             "n_candidates": len(candidates),
             "n_rejected": len(rejected),

@@ -40,6 +40,15 @@ def main() -> int:
         action="store_true",
         help="Also capture SEC EDGAR 8-K metadata (requires OPTAGENT_USER_AGENT).",
     )
+    parser.add_argument(
+        "--suffix",
+        type=str,
+        default="",
+        help=(
+            "Optional filename suffix (e.g. '2026-05-25') so multiple snapshots "
+            "per ticker can co-exist. Empty suffix overwrites <TICKER>.json."
+        ),
+    )
     args = parser.parse_args()
 
     from optagent.adapters import (
@@ -73,7 +82,8 @@ def main() -> int:
             sec_edgar_adapter=sec_adapter,
             frozen_now=frozen_now,
         )
-        out_path = args.output_dir / f"{ticker}.json"
+        filename = f"{ticker}.json" if not args.suffix else f"{ticker}.{args.suffix}.json"
+        out_path = args.output_dir / filename
         fixture.dump(out_path)
         rows = (fixture.yfinance_chain or {}).get("rows") if fixture.yfinance_chain else None
         n_rows = len(rows) if rows else 0
