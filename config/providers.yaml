@@ -35,7 +35,7 @@ profiles:
     entitlement_required: true
     rate_limit_qpm: null
     attribution_string: null
-    terms_url: https://openapi.moomoo.com/futu-api-doc/en/intro/authority.html
+    terms_url: https://openapi.moomoo.com/moomoo-api-doc/en/intro/authority.html
     profile_version: "2026-05-25"
 
   - id: newsapi_free_dev
@@ -50,8 +50,26 @@ profiles:
   - id: newsapi_paid_production
     permitted_use: production_safe
     redistribution: paid_tier_required
-    entitlement_required: false
+    entitlement_required: true
     rate_limit_qpm: null
     attribution_string: null
     terms_url: https://newsapi.org/terms
+    profile_version: "2026-05-25"
+
+  - id: econ_calendar_builtin
+    permitted_use: production_safe
+    redistribution: none
+    entitlement_required: false
+    rate_limit_qpm: null
+    attribution_string: null
+    terms_url: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+    profile_version: "2026-05-25"
+
+  - id: volume_oi_context_derived
+    permitted_use: production_safe
+    redistribution: none
+    entitlement_required: false
+    rate_limit_qpm: null
+    attribution_string: null
+    terms_url: https://www.theocc.com/company-information/documents-and-archives/options-disclosure-document
     profile_version: "2026-05-25"

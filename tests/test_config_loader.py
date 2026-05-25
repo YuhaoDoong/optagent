@@ -17,15 +17,17 @@ def test_finds_config_dir_from_repo_root():
         assert (base / name).exists()
 
 
-def test_load_bundle_provides_six_built_in_profiles():
+def test_load_bundle_provides_all_built_in_profiles():
     bundle = load_bundle(REPO_ROOT / "config")
     ids = sorted(p.id for p in bundle.providers)
     assert ids == [
+        "econ_calendar_builtin",
         "fred_default",
         "moomoo_user_entitled",
         "newsapi_free_dev",
         "newsapi_paid_production",
         "sec_edgar_default",
+        "volume_oi_context_derived",
         "yfinance_research",
     ]
 

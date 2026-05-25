@@ -25,11 +25,23 @@ from .schemas import (
 
 @dataclass(frozen=True)
 class ScreenerThresholds:
+    """Liquidity / time / actionability gates.
+
+    Defaults tuned against the 5-ticker fixture batch (SPY/QQQ/AAPL/NVDA/TSLA);
+    see tests/fixtures/*.json and the Codex screener audit notes for the
+    empirical pass-rate impact.
+    """
+
     min_oi: int = 100
-    min_volume: int = 10
-    max_spread_pct: float = 0.25
+    min_volume: int = 25
+    max_spread_pct: float = 0.15
     min_dte: int = 7
     max_dte: int = 45
+    # Delta-band actionability gate. |delta| outside [min_abs_delta, max_abs_delta]
+    # is rejected so lottery-deep-OTM and synthetic-stock-deep-ITM contracts
+    # don't pass. Set min_abs_delta=0.0 to disable the lower bound.
+    min_abs_delta: float = 0.20
+    max_abs_delta: float = 0.80
 
 
 @dataclass(frozen=True)
@@ -53,24 +65,50 @@ def _eval_one(
     inp: ScreenerInputs,
     thresholds: ScreenerThresholds,
 ) -> tuple[OptionContract | None, str | None]:
-    """Return (candidate, None) for accepted rows, (None, reason) for rejected."""
+    """Return (candidate, None) for accepted rows, (None, reason) for rejected.
+
+    DTE is checked early so out-of-range expiries are reported as
+    `dte_out_of_range` rather than via mixed quote/liquidity reasons.
+    """
+
+    # DTE is a property of the chain expiry, not the row — fail first.
+    if inp.dte < thresholds.min_dte or inp.dte > thresholds.max_dte:
+        return None, "dte_out_of_range"
 
     occ = row.get("occ_symbol")
     if not occ:
         return None, "missing_field"
 
-    bid = float(row.get("bid", 0.0) or 0.0)
-    ask = float(row.get("ask", 0.0) or 0.0)
-    oi = int(row.get("open_interest", 0) or 0)
-    volume = int(row.get("volume", 0) or 0)
-    strike = float(row.get("strike", 0.0) or 0.0)
-    raw_iv = float(row.get("iv", 0.0) or 0.0)
-    right = OptionRight(row["right"]) if isinstance(row.get("right"), str) else row["right"]
+    raw_right = row.get("right")
+    try:
+        right = OptionRight(raw_right) if isinstance(raw_right, str) else raw_right
+        if right is None:
+            return None, "invalid_right"
+    except (ValueError, TypeError):
+        return None, "invalid_right"
 
-    if bid <= 0 or ask <= 0:
+    try:
+        bid = float(row.get("bid", 0.0) or 0.0)
+        ask = float(row.get("ask", 0.0) or 0.0)
+        oi = int(row.get("open_interest", 0) or 0)
+        volume = int(row.get("volume", 0) or 0)
+        strike = float(row.get("strike", 0.0) or 0.0)
+        raw_iv = float(row.get("iv", 0.0) or 0.0)
+    except (TypeError, ValueError):
         return None, "missing_field"
+
+    if bid == 0 and ask == 0:
+        return None, "zero_bid"
+    if bid < 0 or ask < 0:
+        return None, "missing_field"
+    if bid == 0 and ask > 0:
+        return None, "zero_bid"
     if strike <= 0:
         return None, "missing_field"
+    if ask < bid:
+        return None, "crossed_book"
+    if ask == bid and bid > 0:
+        return None, "locked_book"
 
     sp = payoff.spread_pct(bid, ask)
     if sp == float("inf") or sp > thresholds.max_spread_pct:
@@ -80,9 +118,6 @@ def _eval_one(
         return None, "low_oi"
     if volume < thresholds.min_volume:
         return None, "low_volume"
-
-    if inp.dte < thresholds.min_dte or inp.dte > thresholds.max_dte:
-        return None, "dte_out_of_range"
 
     mid = payoff.mid_price(bid, ask)
     be = payoff.breakeven(right, strike, mid)
@@ -96,16 +131,21 @@ def _eval_one(
             right, mid, inp.spot, strike, t_years, inp.risk_free_rate, inp.dividend_yield
         )
         if sigma_solved is None:
-            return None, "missing_field"
+            return None, "invalid_iv"
         sigma = sigma_solved
 
     g = pricing.greeks(
         right, inp.spot, strike, t_years, inp.risk_free_rate, sigma, inp.dividend_yield
     )
 
+    # Actionability filter: deep-OTM lotteries and deep-ITM proxies don't help.
+    abs_delta = abs(g["delta"])
+    if abs_delta < thresholds.min_abs_delta or abs_delta > thresholds.max_abs_delta:
+        return None, "delta_out_of_band"
+
     expiry_dt = datetime.strptime(inp.expiration_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-    liquidity_score = _liquidity_score(oi, volume, sp)
+    liquidity_score = _liquidity_score(oi, volume, sp, thresholds.max_spread_pct)
     data_quality_score = _data_quality_score(bid, ask, raw_iv, sigma)
 
     contract = OptionContract(
@@ -137,15 +177,18 @@ def _eval_one(
     return contract, None
 
 
-def _liquidity_score(oi: int, volume: int, spread_pct: float) -> float:
+def _liquidity_score(oi: int, volume: int, spread_pct: float, max_spread_pct: float) -> float:
     """Simple bounded score; higher = more liquid.
 
-    Caps individual inputs so a single outlier can't dominate.
+    Caps individual inputs so a single outlier can't dominate. The spread
+    term normalises against the active `max_spread_pct` so tuning the
+    threshold also tunes the score consistently.
     """
 
     oi_term = min(oi / 5000.0, 1.0)  # saturates at 5000 OI
     vol_term = min(volume / 500.0, 1.0)  # saturates at 500/day
-    spread_term = max(0.0, 1.0 - spread_pct / 0.25)  # 0 at 25% spread, 1 at tight
+    denom = max(max_spread_pct, 1e-6)
+    spread_term = max(0.0, 1.0 - spread_pct / denom)
     return 0.45 * oi_term + 0.30 * vol_term + 0.25 * spread_term
 
 

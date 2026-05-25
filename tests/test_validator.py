@@ -317,6 +317,213 @@ def test_fred_citation_without_attribution_fails_presence():
     assert outcome.skip_reason is SkipReason.presence_check_failed
 
 
+def test_future_as_of_envelope_is_rejected():
+    """Codex finding (f): future as_of must fail-closed, not pass silently."""
+
+    contract = _contract()
+    chain = _chain_env(age_seconds=-3600)  # 1h in the future
+    v = _long_verdict(
+        contract,
+        [Citation(tool_call_id=chain.tool_call_id, provider_profile_id=chain.provider_profile_id)],
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[contract],
+        envelopes=[chain, _price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [chain, _price_env()]),
+        now=UTC_NOW,
+    )
+    assert outcome.skip_reason is SkipReason.stale_required_input
+    assert "future" in (outcome.decisions[-3].detail or "").lower() or "future" in (outcome.decisions[5].detail or "").lower()
+
+
+def test_nan_in_numeric_field_is_rejected():
+    """Codex finding (d): NaN/Inf must fail numeric grounding."""
+
+    real = _contract()
+    bad = _contract()
+    bad_dict = bad.model_dump()
+    bad_dict["mid"] = float("nan")
+    bad = OptionContract(**bad_dict)
+    chain = _chain_env()
+    v = _long_verdict(
+        bad,
+        [Citation(tool_call_id=chain.tool_call_id, provider_profile_id=chain.provider_profile_id)],
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[real],
+        envelopes=[chain, _price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [chain]),
+        now=UTC_NOW,
+    )
+    assert outcome.skip_reason is SkipReason.numeric_grounding_mismatch
+
+
+def test_strike_tampering_is_rejected():
+    """Codex finding (d): strike must be numerically grounded too."""
+
+    real = _contract(strike=200.0)
+    tampered = _contract()
+    tampered_dict = tampered.model_dump()
+    tampered_dict["strike"] = 201.5  # different strike value
+    tampered = OptionContract(**tampered_dict)
+    chain = _chain_env()
+    v = _long_verdict(
+        tampered,
+        [Citation(tool_call_id=chain.tool_call_id, provider_profile_id=chain.provider_profile_id)],
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[real],
+        envelopes=[chain, _price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [chain]),
+        now=UTC_NOW,
+    )
+    assert outcome.skip_reason is SkipReason.numeric_grounding_mismatch
+
+
+def test_duplicate_candidate_occs_fail_contract_match():
+    """Codex finding (b): exactly-one canonical row is required."""
+
+    real_a = _contract(occ_symbol="AAPL_C200")
+    real_b = _contract(occ_symbol="AAPL_C200", bid=2.40)  # duplicate OCC
+    chain = _chain_env()
+    v = _long_verdict(
+        real_a,
+        [Citation(tool_call_id=chain.tool_call_id, provider_profile_id=chain.provider_profile_id)],
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[real_a, real_b],
+        envelopes=[chain, _price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [chain]),
+        now=UTC_NOW,
+    )
+    assert outcome.skip_reason is SkipReason.hallucinated_contract
+
+
+def test_citation_provider_id_spoof_detected():
+    """Codex finding (c): citation provider_profile_id must match envelope's."""
+
+    contract = _contract()
+    chain = _chain_env()  # provider_profile_id = yfinance_research
+    # The LLM cites the SAME tcid but lies about the provider.
+    v = _long_verdict(
+        contract,
+        [Citation(tool_call_id=chain.tool_call_id, provider_profile_id="moomoo_user_entitled")],
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[contract],
+        envelopes=[chain, _price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [chain]),
+        now=UTC_NOW,
+    )
+    assert outcome.skip_reason is SkipReason.phantom_citation
+
+
+def test_validator_downgrade_always_uses_canonical_disclaimer():
+    """Codex finding: validator must not echo back the LLM's `verdict.disclaimer`."""
+
+    from optagent import DISCLAIMER as CANON
+
+    contract = _contract(occ_symbol="AAPL_C200")
+    chain = _chain_env()
+    v = Verdict(
+        disclaimer="LIES — THIS IS LEGAL ADVICE",  # adversarial disclaimer
+        action=VerdictAction.long_call,
+        contract=_contract(occ_symbol="AAPL_C_HALLUCINATED"),
+        primary_reasons=["..."],
+        citations=[Citation(tool_call_id=chain.tool_call_id, provider_profile_id=chain.provider_profile_id)],
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[contract],
+        envelopes=[chain, _price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [chain]),
+        now=UTC_NOW,
+    )
+    assert outcome.final_verdict.disclaimer == CANON
+
+
+def test_volume_oi_caveat_anchor_matches_renderer():
+    """Codex finding (h): renderer caveat MUST contain the validator's anchor."""
+
+    from optagent.adapters.volume_oi_context import VolumeOIContextAdapter
+    from optagent.validator import VOLUME_OI_REQUIRED_PHRASE
+
+    # The phrase the validator searches for must appear in the adapter's caveat
+    # AND in the renderer's caveat block (case-insensitive substring).
+    assert VOLUME_OI_REQUIRED_PHRASE.lower() in VolumeOIContextAdapter.CAVEAT.lower()
+
+
+def test_validator_records_all_checks_on_skip():
+    """SKIP verdicts must produce a full decisions list — never silently skipped."""
+
+    v = Verdict(
+        disclaimer=DISCLAIMER,
+        action=VerdictAction.skip,
+        skip_reason=SkipReason.no_candidates_after_screen,
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[],
+        envelopes=[_price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [_price_env()]),
+        now=UTC_NOW,
+    )
+    check_ids = {d.check_id for d in outcome.decisions}
+    # All nine independent checks must appear in the decision list.
+    assert {"a_verdict_enum", "b_contract_match", "c_citation_existence", "d_numeric_grounding",
+            "e_compliance_gate", "f_staleness", "g_strategy_scope", "h_presence",
+            "i_positive_path_gating"} <= check_ids
+
+
+def test_skip_path_phantom_citation_recorded():
+    """SKIP verdict citing a phantom tcid must not silently mark (c) as passed."""
+
+    v = Verdict(
+        disclaimer=DISCLAIMER,
+        action=VerdictAction.skip,
+        skip_reason=SkipReason.no_candidates_after_screen,
+        citations=[Citation(tool_call_id="tc-PHANTOM", provider_profile_id="yfinance_research")],
+    )
+    outcome = validate(
+        verdict=v,
+        candidates=[],
+        envelopes=[_price_env()],
+        llm_tool_input=None,
+        registry=_registry(),
+        ttl_table=TTL_TABLE,
+        rendered_output=render_template(v, [_price_env()]),
+        now=UTC_NOW,
+    )
+    citation_decision = next(d for d in outcome.decisions if d.check_id == "c_citation_existence")
+    assert citation_decision.passed is False
+
+
 def test_skip_verdict_passes_minimal_checks():
     v = Verdict(
         disclaimer=DISCLAIMER,
