@@ -178,6 +178,54 @@ class YFinanceAdapter:
         except Exception as e:  # broad on purpose: network/HTML/parse errors all degrade
             return self._unavailable(f"price_fetch_failed: {e.__class__.__name__}")
 
+    def get_history(self, ticker: str, period: str = "60d") -> Envelope:
+        """Fetch daily OHLCV history and a HV20 (annualised) realised vol."""
+
+        blocked = self._check_gate()
+        if blocked is not None:
+            return blocked
+        try:
+            tk = self._yf.Ticker(ticker)
+            df = tk.history(period=period, interval="1d", auto_adjust=False)
+        except Exception as e:
+            return self._unavailable(f"history_fetch_failed: {e.__class__.__name__}")
+        if df is None or len(df) < 21:
+            return self._unavailable(f"history_too_short_for_{ticker}")
+
+        # Close column → daily log returns → 20-day stdev → annualise.
+        import math
+
+        closes = [float(c) for c in df["Close"].tolist() if c is not None]
+        if len(closes) < 21:
+            return self._unavailable(f"history_too_short_for_{ticker}")
+        rets = []
+        for i in range(1, len(closes)):
+            if closes[i - 1] <= 0 or closes[i] <= 0:
+                continue
+            rets.append(math.log(closes[i] / closes[i - 1]))
+        if len(rets) < 20:
+            return self._unavailable("not_enough_returns")
+        window = rets[-20:]
+        mean = sum(window) / len(window)
+        var = sum((x - mean) ** 2 for x in window) / (len(window) - 1)
+        hv20_annual = math.sqrt(var) * math.sqrt(252.0)
+
+        # Also return a 60d high/low + last close for context.
+        last_close = closes[-1]
+        recent_high = max(closes[-min(60, len(closes)) :])
+        recent_low = min(closes[-min(60, len(closes)) :])
+
+        return self._ok(
+            {
+                "ticker": ticker,
+                "last_close": last_close,
+                "recent_high_60d": recent_high,
+                "recent_low_60d": recent_low,
+                "hv20_annual": hv20_annual,
+                "n_returns_used": len(window),
+            }
+        )
+
     def get_options_chain(
         self,
         ticker: str,

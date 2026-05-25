@@ -51,6 +51,13 @@ _DEFAULT_PROFILES: list[ProviderProfile] = [
         profile_version="2026-05-25",
     ),
     ProviderProfile(
+        id="volume_oi_context_derived",
+        permitted_use=PermittedUse.production_safe,
+        redistribution=Redistribution.none,
+        terms_url="https://www.theocc.com/company-information/documents-and-archives/options-disclosure-document",
+        profile_version="2026-05-25",
+    ),
+    ProviderProfile(
         id="moomoo_user_entitled",
         permitted_use=PermittedUse.research_only,
         redistribution=Redistribution.none,

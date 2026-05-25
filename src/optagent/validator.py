@@ -373,8 +373,11 @@ def _check_presence(
     cited_profiles = {c.provider_profile_id for c in verdict.citations}
     if "fred_default" in cited_profiles and "Federal Reserve Bank of St. Louis" not in rendered_output:
         return False, "fred_attribution_missing"
-    # volume_oi_context isn't its own profile yet (deferred adapter); when it
-    # ships, add the caveat-presence check here.
+    if (
+        "volume_oi_context_derived" in cited_profiles
+        and "not holder cost-basis" not in rendered_output.lower()
+    ):
+        return False, "volume_oi_caveat_missing"
     return True, None
 
 

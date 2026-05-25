@@ -464,3 +464,168 @@ def make_anthropic_client(api_key: str | None = None, model: str = "claude-opus-
             raise RuntimeError("Anthropic response did not include the expected tool_use block.")
 
     return _AnthropicClient()
+
+
+def make_openai_client(api_key: str | None = None, model: str = "gpt-4o"):
+    """OpenAI Chat Completions function-calling backend.
+
+    Tool schema is converted to OpenAI's `functions` / `tools` format. The
+    response is parsed for the first `tool_calls[0].function.arguments`
+    payload, which is JSON-decoded to the tool input dict.
+    """
+
+    try:
+        import openai  # noqa: WPS433
+    except ImportError as e:
+        raise RuntimeError(
+            "OpenAI SDK not installed; install with `pip install openai` or use --provider anthropic."
+        ) from e
+
+    sdk_client = openai.OpenAI(api_key=api_key) if api_key else openai.OpenAI()
+
+    class _OpenAIClient:
+        def synthesise(
+            self,
+            *,
+            system: str,
+            user_prompt: str,
+            tool: dict,
+            max_output_tokens: int,
+            timeout_s: int,
+        ) -> tuple[dict, dict]:
+            import json
+
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["input_schema"],
+                },
+            }
+            resp = sdk_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                tools=[openai_tool],
+                tool_choice={"type": "function", "function": {"name": tool["name"]}},
+                max_tokens=max_output_tokens,
+                timeout=timeout_s,
+            )
+            choice = resp.choices[0]
+            tcs = choice.message.tool_calls or []
+            if not tcs:
+                raise RuntimeError("OpenAI response did not include a tool call.")
+            args_raw = tcs[0].function.arguments
+            tool_input = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            return tool_input, {"finish_reason": choice.finish_reason}
+
+    return _OpenAIClient()
+
+
+def make_gemini_client(api_key: str | None = None, model: str = "gemini-1.5-pro"):
+    """Google Gemini function-calling backend.
+
+    Uses `google-generativeai`. Note that Gemini's schema does not accept
+    `null` in enum lists, so we strip that variant if present.
+    """
+
+    try:
+        import google.generativeai as genai  # noqa: WPS433
+    except ImportError as e:
+        raise RuntimeError(
+            "google-generativeai SDK not installed; install with "
+            "`pip install google-generativeai` or use --provider anthropic."
+        ) from e
+
+    if api_key:
+        genai.configure(api_key=api_key)
+
+    def _strip_nulls(schema: dict) -> dict:
+        """Gemini rejects `null` in enums and unions; drop it where present."""
+
+        out = {}
+        for k, v in schema.items():
+            if k == "type" and isinstance(v, list):
+                out[k] = [t for t in v if t != "null"][0] if any(t != "null" for t in v) else "string"
+            elif k == "enum" and isinstance(v, list):
+                out[k] = [e for e in v if e is not None]
+            elif isinstance(v, dict):
+                out[k] = _strip_nulls(v)
+            else:
+                out[k] = v
+        return out
+
+    cleaned_params = _strip_nulls(dict(EMIT_VERDICT_TOOL["input_schema"]))
+
+    class _GeminiClient:
+        def synthesise(
+            self,
+            *,
+            system: str,
+            user_prompt: str,
+            tool: dict,
+            max_output_tokens: int,
+            timeout_s: int,
+        ) -> tuple[dict, dict]:
+            from google.generativeai.types import FunctionDeclaration, Tool  # noqa: WPS433
+
+            decl = FunctionDeclaration(
+                name=tool["name"],
+                description=tool["description"],
+                parameters=cleaned_params,
+            )
+            mdl = genai.GenerativeModel(
+                model_name=model,
+                system_instruction=system,
+                tools=[Tool(function_declarations=[decl])],
+            )
+            resp = mdl.generate_content(
+                user_prompt,
+                generation_config={"max_output_tokens": max_output_tokens},
+                tool_config={"function_calling_config": {"mode": "ANY", "allowed_function_names": [tool["name"]]}},
+                request_options={"timeout": timeout_s},
+            )
+            for cand in resp.candidates or []:
+                for part in cand.content.parts or []:
+                    fc = getattr(part, "function_call", None)
+                    if fc and fc.name == tool["name"]:
+                        return dict(fc.args), {"finish_reason": str(cand.finish_reason)}
+            raise RuntimeError("Gemini response did not include the expected function_call.")
+
+    return _GeminiClient()
+
+
+def make_client_from_env(provider: str | None = None, model: str | None = None):
+    """Auto-select an `LLMClient` based on env vars when `provider` is None.
+
+    Resolution order: `provider` arg → `OPTAGENT_LLM_PROVIDER` env →
+    cascade detection (ANTHROPIC_API_KEY → OPENAI_API_KEY → GEMINI_API_KEY).
+    Raises RuntimeError when no provider is configured.
+    """
+
+    import os
+
+    chosen = (provider or os.environ.get("OPTAGENT_LLM_PROVIDER", "")).lower().strip()
+    if not chosen:
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            chosen = "anthropic"
+        elif os.environ.get("OPENAI_API_KEY"):
+            chosen = "openai"
+        elif os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+            chosen = "gemini"
+        else:
+            raise RuntimeError(
+                "No LLM provider configured. Set ANTHROPIC_API_KEY / OPENAI_API_KEY / "
+                "GEMINI_API_KEY, or pass --provider explicitly."
+            )
+
+    if chosen == "anthropic":
+        return make_anthropic_client(model=model or "claude-opus-4-7"), "anthropic", (model or "claude-opus-4-7")
+    if chosen == "openai":
+        return make_openai_client(model=model or "gpt-4o"), "openai", (model or "gpt-4o")
+    if chosen == "gemini":
+        return make_gemini_client(model=model or "gemini-1.5-pro"), "gemini", (model or "gemini-1.5-pro")
+    raise RuntimeError(f"unknown LLM provider {chosen!r}; expected anthropic|openai|gemini")

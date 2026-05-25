@@ -44,6 +44,7 @@ class ScreenerInputs:
     risk_free_rate: float  # decimal e.g. 0.045
     dividend_yield: float = 0.0
     days_to_event: int | None = None  # min(days_to_earnings, days_to_FOMC) etc.
+    hv20_annual: float | None = None  # annualised 20-day realised vol (decimal)
     thresholds: ScreenerThresholds = ScreenerThresholds()
 
 
@@ -210,6 +211,8 @@ def screen(inp: ScreenerInputs, _run_config: RunConfig | None = None) -> Screene
             "dte": inp.dte,
             "risk_free_rate": inp.risk_free_rate,
             "days_to_event": inp.days_to_event,
+            "hv20_annual": inp.hv20_annual,
+            "iv_richness_summary": _iv_richness_summary(candidates, inp.hv20_annual),
             "n_rows_in": len(inp.rows),
             "n_candidates": len(candidates),
             "n_rejected": len(rejected),
@@ -222,6 +225,34 @@ def screen(inp: ScreenerInputs, _run_config: RunConfig | None = None) -> Screene
             },
         },
     )
+
+
+def _iv_richness_summary(
+    candidates: list[OptionContract], hv20: float | None
+) -> dict | None:
+    """IV richness proxy: ATM IV divided by HV20.
+
+    >1 → options expensive relative to recent realised vol (premium-buyers
+         pay up); <1 → options cheap relative to realised. Reported as
+         informational context for the LLM and for the audit ledger; it does
+         NOT gate the candidate list in v1 (deferred to a future IV-rank
+         filter built on accumulated history).
+    """
+
+    if not candidates or hv20 is None or hv20 <= 0:
+        return None
+    ivs = sorted(c.iv for c in candidates)
+    median_iv = ivs[len(ivs) // 2]
+    return {
+        "hv20_annual": round(hv20, 4),
+        "median_iv": round(median_iv, 4),
+        "iv_div_hv": round(median_iv / hv20, 3),
+        "label": (
+            "iv_rich" if median_iv / hv20 > 1.10
+            else "iv_cheap" if median_iv / hv20 < 0.90
+            else "iv_neutral"
+        ),
+    }
 
 
 def split_by_bias(

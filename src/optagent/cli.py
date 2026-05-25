@@ -50,13 +50,20 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze_p.add_argument(
         "--enable-llm",
         action="store_true",
-        help="Call Claude for verdict synthesis. Requires ANTHROPIC_API_KEY.",
+        help="Call an LLM for verdict synthesis.",
+    )
+    analyze_p.add_argument(
+        "--provider",
+        type=str,
+        default=None,
+        choices=("anthropic", "openai", "gemini"),
+        help="LLM provider. Auto-detected from env vars when omitted.",
     )
     analyze_p.add_argument(
         "--model",
         type=str,
         default=None,
-        help="Override the LLM model_version (default: price_table default_model).",
+        help="Override the LLM model_version (default: provider's default).",
     )
     analyze_p.add_argument(
         "--config-dir",
@@ -96,13 +103,15 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             price_table = bundle.price_table
             ttl_table = bundle.ttl_table
-            model = args.model or price_table.get("default_model")
             try:
-                from .llm import make_anthropic_client
+                from .llm import make_client_from_env
 
-                llm_client = make_anthropic_client(model=model)
+                llm_client, chosen_provider, model = make_client_from_env(
+                    provider=args.provider, model=args.model
+                )
+                print(f"[llm] provider={chosen_provider} model={model}", file=sys.stderr)
             except RuntimeError as e:
-                print(f"ERROR: --enable-llm but Anthropic SDK is unavailable: {e}", file=sys.stderr)
+                print(f"ERROR: --enable-llm: {e}", file=sys.stderr)
                 return 2
 
         registry = ProviderRegistry()

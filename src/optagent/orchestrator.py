@@ -22,6 +22,7 @@ from .adapters import (
     EconCalendarAdapter,
     FREDAdapter,
     SECEdgarAdapter,
+    VolumeOIContextAdapter,
     YFinanceAdapter,
 )
 from .budget import BudgetResult, precheck as budget_precheck
@@ -85,6 +86,12 @@ def _cites_fred(verdict: Verdict) -> bool:
     return any(c.provider_profile_id == "fred_default" for c in verdict.citations)
 
 
+def _cites_volume_oi(verdict: Verdict) -> bool:
+    return any(
+        c.provider_profile_id == "volume_oi_context_derived" for c in verdict.citations
+    )
+
+
 # profile registration is delegated to optagent.profiles.ensure_default_profiles
 
 
@@ -134,6 +141,7 @@ def analyze(
     fred_adapter: FREDAdapter | None = None,
     econ_calendar_adapter: EconCalendarAdapter | None = None,
     sec_edgar_adapter: SECEdgarAdapter | None = None,
+    volume_oi_adapter: VolumeOIContextAdapter | None = None,
     horizon_days: int = 14,
     max_loss_usd: float | None = None,
     risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
@@ -177,12 +185,19 @@ def analyze(
         yfinance_adapter = YFinanceAdapter(registry)
     if econ_calendar_adapter is None:
         econ_calendar_adapter = EconCalendarAdapter(registry)
+    if volume_oi_adapter is None:
+        volume_oi_adapter = VolumeOIContextAdapter(registry)
 
     price_env = yfinance_adapter.get_price(ticker)
     chain_env = yfinance_adapter.get_options_chain(
         ticker, min_dte=max(1, horizon_days // 2), max_dte=max(horizon_days * 3, 45)
     )
+    history_env = yfinance_adapter.get_history(ticker)
     econ_env = econ_calendar_adapter.get_calendar()
+    spot_for_voi = None
+    if price_env.confidence is not Confidence.unavailable and price_env.value:
+        spot_for_voi = float(price_env.value.get("last", 0)) or None
+    voi_env = volume_oi_adapter.compute(chain_env.value, spot=spot_for_voi)
 
     fred_env: Envelope | None = None
     if fred_adapter is not None:
@@ -192,7 +207,7 @@ def analyze(
     if sec_edgar_adapter is not None:
         sec_env = sec_edgar_adapter.get_recent_8k(ticker)
 
-    envelopes: list[Envelope] = [price_env, chain_env, econ_env]
+    envelopes: list[Envelope] = [price_env, chain_env, history_env, econ_env, voi_env]
     if fred_env is not None:
         envelopes.append(fred_env)
     if sec_env is not None:
@@ -215,7 +230,7 @@ def analyze(
                 if env.confidence is Confidence.unavailable
             ],
         )
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -250,6 +265,10 @@ def analyze(
         if days_by_kind:
             days_to_event = min(days_by_kind.values())
 
+    hv20_annual: float | None = None
+    if history_env.confidence is not Confidence.unavailable and history_env.value:
+        hv20_annual = float(history_env.value.get("hv20_annual") or 0.0) or None
+
     screener_inputs = ScreenerInputs(
         ticker=ticker,
         spot=spot,
@@ -258,6 +277,7 @@ def analyze(
         dte=dte,
         risk_free_rate=risk_free_rate,
         days_to_event=days_to_event,
+        hv20_annual=hv20_annual,
         thresholds=ScreenerThresholds(
             min_dte=max(1, horizon_days // 2),
             max_dte=max(horizon_days * 3, 45),
@@ -270,7 +290,7 @@ def analyze(
             SkipReason.no_candidates_after_screen,
             ["Screener produced zero candidates after liquidity + DTE filters."],
         )
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -352,7 +372,7 @@ def _run_template_only_path(
             "pass --enable-llm to let the LLM synthesise a verdict.",
         ],
     )
-    memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
+    memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
     return _finalize(
         run_config,
         verdict,
@@ -397,7 +417,7 @@ def _run_llm_path(
             SkipReason.unknown_model_pricing,
             ["No model_version supplied and price_table has no default_model."],
         )
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -451,7 +471,7 @@ def _run_llm_path(
                 "Falling back to template_only behaviour for this run.",
             ],
         )
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
         return _finalize(
             run_config,
             verdict,
@@ -483,7 +503,7 @@ def _run_llm_path(
     )
 
     pre_render = render_template(
-        synthesis.verdict, envelopes, cited_fred=_cites_fred(synthesis.verdict)
+        synthesis.verdict, envelopes, cited_fred=_cites_fred(synthesis.verdict), cited_volume_oi_context=_cites_volume_oi(synthesis.verdict)
     )
 
     outcome = validate(
@@ -498,7 +518,7 @@ def _run_llm_path(
 
     final_verdict = outcome.final_verdict
     final_memo = render_template(
-        final_verdict, envelopes, cited_fred=_cites_fred(final_verdict)
+        final_verdict, envelopes, cited_fred=_cites_fred(final_verdict), cited_volume_oi_context=_cites_volume_oi(final_verdict)
     )
 
     return _finalize(

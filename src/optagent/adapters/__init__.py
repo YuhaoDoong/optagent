@@ -3,6 +3,7 @@
 from .econ_calendar_adapter import EconCalendarAdapter, _Event as EconEvent
 from .fred_adapter import FREDAdapter, FREDUnavailableError, SERIES_IDS as FRED_SERIES_IDS
 from .sec_edgar_adapter import SECEdgarAdapter
+from .volume_oi_context import VolumeOIContextAdapter
 from .yfinance_adapter import (
     YFinanceAdapter,
     YFinanceUnavailableError,
@@ -15,6 +16,7 @@ __all__ = [
     "FREDUnavailableError",
     "FRED_SERIES_IDS",
     "SECEdgarAdapter",
+    "VolumeOIContextAdapter",
     "YFinanceAdapter",
     "YFinanceUnavailableError",
 ]

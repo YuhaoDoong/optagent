@@ -25,3 +25,23 @@ models:
     output_usd_per_mtok: 4.0
     tokenizer: claude
     tokenizer_version: "claude-2026-04"
+  gpt-4o:
+    input_usd_per_mtok: 2.50
+    output_usd_per_mtok: 10.0
+    tokenizer: openai-cl100k
+    tokenizer_version: "openai-2024-08"
+  gpt-4o-mini:
+    input_usd_per_mtok: 0.15
+    output_usd_per_mtok: 0.60
+    tokenizer: openai-cl100k
+    tokenizer_version: "openai-2024-08"
+  gemini-1.5-pro:
+    input_usd_per_mtok: 1.25
+    output_usd_per_mtok: 5.0
+    tokenizer: gemini
+    tokenizer_version: "gemini-1.5"
+  gemini-1.5-flash:
+    input_usd_per_mtok: 0.075
+    output_usd_per_mtok: 0.30
+    tokenizer: gemini
+    tokenizer_version: "gemini-1.5"
