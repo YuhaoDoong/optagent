@@ -194,6 +194,7 @@ def build_user_prompt(
     envelopes: list[Envelope],
     news_excerpts: list[tuple[str, str]] | None = None,
     sec_excerpts: list[tuple[str, str]] | None = None,
+    ml_signal: dict | None = None,
 ) -> str:
     """Assemble the user-side prompt. Pure string — no network."""
 
@@ -218,6 +219,29 @@ def build_user_prompt(
     parts.append("Upstream tool envelopes:")
     for env in envelopes:
         parts.append(_format_envelope(env))
+
+    if ml_signal is not None:
+        parts.append("")
+        parts.append("ML direction signal (auxiliary input — NOT authoritative):")
+        parts.append(f"  prob_up: {ml_signal.get('prob_up')}")
+        parts.append(f"  class_label: {ml_signal.get('class_label')}")
+        parts.append(f"  credibility: {ml_signal.get('credibility', 'low')}")
+        parts.append(f"  oos_accuracy: {ml_signal.get('oos_accuracy')} (walk-forward)")
+        parts.append(f"  n_oos_folds: {ml_signal.get('n_oos_folds')}")
+        parts.append(f"  model_version: {ml_signal.get('model_version')}")
+        # Surface the feature snapshot so the LLM can ground rationale in the
+        # actual inputs, but DO NOT instruct it to obey the model.
+        snap = ml_signal.get("feature_snapshot") or {}
+        if snap:
+            parts.append("  feature_snapshot:")
+            for k, v in snap.items():
+                parts.append(f"    - {k}={v}")
+        parts.append(
+            "  NOTE: This is a low-credibility statistical hint. Treat it as one "
+            "of several evidence streams; do NOT defer to it on its own. If the "
+            "options-chain / news / event-calendar evidence disagrees with this "
+            "signal, prefer SKIP unless the disagreement is clearly explainable."
+        )
 
     if news_excerpts:
         parts.append("")
@@ -383,6 +407,7 @@ def synthesise(
     envelopes: list[Envelope],
     news_excerpts: list[tuple[str, str]] | None = None,
     sec_excerpts: list[tuple[str, str]] | None = None,
+    ml_signal: dict | None = None,
     max_output_tokens: int = 2000,
     timeout_s: int = 45,
 ) -> SynthesisResult:
@@ -395,6 +420,7 @@ def synthesise(
         envelopes=envelopes,
         news_excerpts=news_excerpts,
         sec_excerpts=sec_excerpts,
+        ml_signal=ml_signal,
     )
     tool_input, raw_response = client.synthesise(
         system=SYSTEM_PROMPT,

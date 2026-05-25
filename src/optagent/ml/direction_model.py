@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 
 from .features import FEATURE_NAMES, build_features, build_target
+from .walk_forward import walk_forward_eval
 
 
 RETRAIN_DAYS = 7
@@ -56,6 +57,10 @@ class MLDirectionSignal:
     `prob_up` is in [0, 1]; `class_label` is "up" / "down" / "neutral"
     using ±0.05 around 0.5 for the neutral band. `feature_snapshot` is the
     final feature row that fed the prediction (audit ledger material).
+
+    `oos_accuracy` is the walk-forward (expanding window) accuracy mean,
+    `accuracy_self` is the much-less-credible in-sample upper bound; both
+    are kept so the audit ledger can show both numbers.
     """
 
     ticker: str
@@ -66,6 +71,10 @@ class MLDirectionSignal:
     accuracy_self: float
     model_version: str
     feature_snapshot: dict[str, float] = field(default_factory=dict)
+    oos_accuracy: float | None = None
+    oos_log_loss: float | None = None
+    n_oos_folds: int | None = None
+    credibility: str = "low"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,7 +83,11 @@ class MLDirectionSignal:
             "class_label": self.class_label,
             "trained_at": self.trained_at.astimezone(timezone.utc).isoformat(),
             "n_train_rows": self.n_train_rows,
-            "accuracy_self": round(self.accuracy_self, 4),
+            "accuracy_self_in_sample": round(self.accuracy_self, 4),
+            "oos_accuracy": (round(self.oos_accuracy, 4) if self.oos_accuracy is not None else None),
+            "oos_log_loss": (round(self.oos_log_loss, 4) if self.oos_log_loss is not None else None),
+            "n_oos_folds": self.n_oos_folds,
+            "credibility": self.credibility,
             "model_version": self.model_version,
             "feature_snapshot": {k: round(v, 6) for k, v in self.feature_snapshot.items()},
         }
@@ -210,6 +223,9 @@ class MLDirectionAdapter:
                 model, in_sample_acc, n_rows = _train_model(features, target)
             except MLCacheError:
                 return None
+            # Walk-forward eval on the SAME OHLCV — cheap (~1s) and gives the
+            # ledger an honest OOS metric.
+            wf = walk_forward_eval(ohlcv)
             blob = {
                 "model": model,
                 "trained_at": datetime.now(timezone.utc),
@@ -218,6 +234,9 @@ class MLDirectionAdapter:
                 "accuracy_self": in_sample_acc,
                 "feature_names": list(FEATURE_NAMES),
                 "model_version": MODEL_VERSION,
+                "oos_accuracy": (wf.oos_accuracy_mean if wf is not None else None),
+                "oos_log_loss": (wf.oos_log_loss_mean if wf is not None else None),
+                "n_oos_folds": (wf.n_folds if wf is not None else None),
             }
             self._save(self._cache_path(ticker), blob)
 
@@ -225,6 +244,15 @@ class MLDirectionAdapter:
         feature_snapshot = {
             k: float(latest_row[k]) for k in FEATURE_NAMES if math.isfinite(float(latest_row[k]))
         }
+        oos_accuracy = blob.get("oos_accuracy")
+        # Credibility annotation — keeps the ledger / LLM from over-trusting
+        # the model. "high" requires >=3 OOS folds AND accuracy > 0.55.
+        if oos_accuracy is None:
+            credibility = "low"
+        elif oos_accuracy > 0.55 and (blob.get("n_oos_folds") or 0) >= 3:
+            credibility = "medium"  # still not strong evidence; just better than nothing
+        else:
+            credibility = "low"
         return MLDirectionSignal(
             ticker=ticker,
             prob_up=prob_up,
@@ -234,6 +262,10 @@ class MLDirectionAdapter:
             accuracy_self=float(blob["accuracy_self"]),
             model_version=str(blob.get("model_version", MODEL_VERSION)),
             feature_snapshot=feature_snapshot,
+            oos_accuracy=oos_accuracy,
+            oos_log_loss=blob.get("oos_log_loss"),
+            n_oos_folds=blob.get("n_oos_folds"),
+            credibility=credibility,
         )
 
     def signal(self, ticker: str, *, ohlcv: pd.DataFrame | None = None) -> MLDirectionSignal | None:

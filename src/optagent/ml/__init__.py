@@ -15,10 +15,13 @@ from .direction_model import (
     MLDirectionSignal,
     RETRAIN_DAYS,
 )
+from .walk_forward import WalkForwardResult, walk_forward_eval
 
 __all__ = [
     "MLCacheError",
     "MLDirectionAdapter",
     "MLDirectionSignal",
     "RETRAIN_DAYS",
+    "WalkForwardResult",
+    "walk_forward_eval",
 ]

@@ -88,6 +88,8 @@ pip install -e .[llm]        # anthropic + tiktoken (optional)
 
 ## Quickstart
 
+### Single-ticker analysis
+
 ```bash
 # template-only (no LLM, no API key needed)
 optagent analyze AAPL --horizon 14 --max-loss 500
@@ -97,11 +99,54 @@ export FRED_API_KEY=...
 export OPTAGENT_USER_AGENT="me/0.0.1 (me@example.com)"  # SEC EDGAR requires this
 optagent analyze AAPL
 
+# add per-ticker ML direction model (Alt-3 v0; sklearn classifier)
+optagent analyze AAPL --enable-ml
+
 # LLM mode — provider auto-detected from env vars
 ANTHROPIC_API_KEY=sk-... optagent analyze AAPL --enable-llm
 OPENAI_API_KEY=sk-...    optagent analyze AAPL --enable-llm --provider openai
 GEMINI_API_KEY=...       optagent analyze AAPL --enable-llm --provider gemini
 ```
+
+### Cross-ticker screening
+
+Find candidates across a universe by running a quant strategy. v0.3 ships
+one strategy (`oversold_rebound`, a US-equity port of an extreme-value
+repair observation model); the framework is pluggable so adding new
+strategies is a single file under `src/optagent/strategies/`.
+
+```bash
+# default: 60-ticker US large-cap universe, top 5 candidates
+optagent screen --strategy oversold_rebound --limit 5
+
+# custom universe from file
+optagent screen --strategy oversold_rebound --universe my_watchlist.txt
+
+# add soft universe filters (market cap / avg volume)
+optagent screen --strategy oversold_rebound \
+                --min-market-cap 10e9 \
+                --min-avg-volume 1e6
+```
+
+The screen emits one `StrategySignal` per ticker:
+
+```
+RESEARCH ONLY — NOT FINANCIAL ADVICE.
+========================================================================
+Strategy:      oversold_rebound
+Universe size: 60    evaluated: 60    triggered: 2
+Top candidates:
+  1. XYZ  score=0.812  direction=long_call_observation  spot=$24.10
+     target=$26.40  repair_space=+9.54%
+     daily: RSI=27.1  WR=-94.3  ema20_dev=-0.058  consec_down=5
+     note: v0.3 strategy: observation only; needs human + IV + event confirmation
+```
+
+Each row is a structured observation (NOT a trade signal), modeled after
+the buy-side observation template: multi-timeframe diagnosis → IV/DTE
+context → execution friction → potential repair space → human-required
+caveats. See `src/optagent/strategies/base.py` for the canonical
+`StrategySignal` schema and `oversold_rebound.py` for an example.
 
 ## Features
 

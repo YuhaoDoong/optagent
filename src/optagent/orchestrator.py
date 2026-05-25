@@ -366,6 +366,7 @@ def analyze(
             ledger_dir=ledger_dir,
             write_ledger=write_ledger,
             dte=dte,
+            ml_signal=ml_signal,
         )
 
     # ---- template_only fall-through ----
@@ -447,6 +448,7 @@ def _run_llm_path(
     ledger_dir: Path | None,
     write_ledger: bool,
     dte: int,
+    ml_signal: MLDirectionSignal | None = None,
 ) -> AnalyzeResult:
     from .llm import build_user_prompt
 
@@ -544,6 +546,7 @@ def _run_llm_path(
         candidates=screener_output.candidates,
         envelopes=envelopes,
         news_excerpts=news_excerpts or None,
+        ml_signal=ml_signal.to_dict() if ml_signal is not None else None,
         max_output_tokens=budget.max_output_tokens,
     )
 

@@ -28,6 +28,41 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
+    screen_p = sub.add_parser(
+        "screen",
+        help="Run a strategy across a universe and recommend top candidates.",
+    )
+    screen_p.add_argument(
+        "--strategy",
+        type=str,
+        default="oversold_rebound",
+        help="Strategy id (default: oversold_rebound).",
+    )
+    screen_p.add_argument(
+        "--universe",
+        type=str,
+        default="builtin",
+        help="Either 'builtin' (default US large-cap list) or a path to a one-ticker-per-line file.",
+    )
+    screen_p.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Top N to surface (default 5).",
+    )
+    screen_p.add_argument(
+        "--min-market-cap",
+        type=float,
+        default=None,
+        help="Soft filter (USD). Tickers below are dropped before scoring.",
+    )
+    screen_p.add_argument(
+        "--min-avg-volume",
+        type=float,
+        default=None,
+        help="Soft filter on 10-day avg share volume.",
+    )
+
     analyze_p = sub.add_parser("analyze", help="Analyze a ticker and emit a research memo.")
     analyze_p.add_argument("ticker", help="US equity ticker (e.g. AAPL, SPY).")
     analyze_p.add_argument(
@@ -102,6 +137,33 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "screen":
+        from . import DISCLAIMER
+        from .strategies import (
+            UniverseFilter,
+            get_strategy,
+            load_universe,
+            render_screen_report,
+            screen_universe,
+        )
+
+        try:
+            strategy = get_strategy(args.strategy)
+        except KeyError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
+
+        universe = load_universe(args.universe)
+        if args.min_market_cap is not None or args.min_avg_volume is not None:
+            universe = UniverseFilter(
+                min_market_cap_usd=args.min_market_cap,
+                min_avg_volume=args.min_avg_volume,
+            ).apply(universe)
+
+        result = screen_universe(strategy, universe, top_n=args.limit)
+        sys.stdout.write(render_screen_report(result, DISCLAIMER))
+        return 0
 
     if args.command == "analyze":
         llm_client = None
