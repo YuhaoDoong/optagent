@@ -1,0 +1,34 @@
+# Cache TTLs per data type (AC-10). Out-of-TTL CRITICAL inputs force SKIP.
+# Times in seconds.
+data_types:
+  price:
+    rth: 10
+    after_hours: 300
+    critical: true
+  options_chain:
+    rth_low_vol: 30
+    rth_high_vol_or_near_expiry: 15
+    after_hours: 300
+    critical: true
+  macro:
+    baseline: 86400
+    after_hours: 86400
+    critical: false
+    refresh_on_release: true
+  econ_calendar:
+    baseline: 86400
+    after_hours: 86400
+    critical: false
+  news_factual:
+    baseline: 900
+    after_hours: 900
+    critical: false
+  sec_filings:
+    baseline: 3600
+    after_hours: 3600
+    critical: false
+  volume_oi_context:
+    baseline: 600
+    after_hours: 600
+    critical: false
+    caveat: "not holder cost-basis"

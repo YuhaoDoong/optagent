@@ -1,0 +1,57 @@
+# Provider compliance profiles. One profile per license tier.
+# Adding a new tier of an existing provider creates a new profile id.
+profiles:
+  - id: yfinance_research
+    permitted_use: research_only
+    redistribution: none
+    entitlement_required: false
+    rate_limit_qpm: null
+    attribution_string: null
+    terms_url: https://pypi.org/project/yfinance/
+    profile_version: "2026-05-25"
+
+  - id: fred_default
+    permitted_use: production_safe
+    redistribution: attribution
+    entitlement_required: false
+    rate_limit_qpm: 120
+    attribution_string: |
+      Data sourced from the Federal Reserve Bank of St. Louis (FRED).
+    terms_url: https://fred.stlouisfed.org/docs/api/terms_of_use.html
+    profile_version: "2026-05-25"
+
+  - id: sec_edgar_default
+    permitted_use: production_safe
+    redistribution: none
+    entitlement_required: false
+    rate_limit_qpm: 600
+    attribution_string: null
+    terms_url: https://www.sec.gov/about/developer-resources
+    profile_version: "2026-05-25"
+
+  - id: moomoo_user_entitled
+    permitted_use: research_only
+    redistribution: none
+    entitlement_required: true
+    rate_limit_qpm: null
+    attribution_string: null
+    terms_url: https://openapi.moomoo.com/futu-api-doc/en/intro/authority.html
+    profile_version: "2026-05-25"
+
+  - id: newsapi_free_dev
+    permitted_use: dev_only
+    redistribution: none
+    entitlement_required: false
+    rate_limit_qpm: null
+    attribution_string: null
+    terms_url: https://newsapi.org/terms
+    profile_version: "2026-05-25"
+
+  - id: newsapi_paid_production
+    permitted_use: production_safe
+    redistribution: paid_tier_required
+    entitlement_required: false
+    rate_limit_qpm: null
+    attribution_string: null
+    terms_url: https://newsapi.org/terms
+    profile_version: "2026-05-25"

@@ -1,0 +1,38 @@
+[project]
+name = "optagent"
+version = "0.0.1"
+description = "US equity options research agent — long-premium-only verdicts with audit-grade reproducibility."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "yhdong" }]
+dependencies = [
+    "pydantic>=2.7,<3",
+    "pyyaml>=6,<7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+adapters = [
+    "yfinance>=0.2,<1",
+    "fredapi>=0.5,<1",
+    "requests>=2.31,<3",
+]
+llm = [
+    "anthropic>=0.40,<1",
+    "tiktoken>=0.7,<1",
+]
+
+[project.scripts]
+optagent = "optagent.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

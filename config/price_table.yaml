@@ -1,0 +1,27 @@
+# LLM price table for AC-11 deterministic worst-case budget.
+# Prices in USD per 1M tokens. Update when model versions change.
+price_table_version: "2026-05-25"
+default_model: claude-opus-4-7
+tokenizer_default: claude
+limits:
+  max_input_tokens: 60000
+  max_output_tokens: 2000
+  max_retries: 2
+  timeout_s: 45
+  safety_margin: 0.20
+models:
+  claude-opus-4-7:
+    input_usd_per_mtok: 15.0
+    output_usd_per_mtok: 75.0
+    tokenizer: claude
+    tokenizer_version: "claude-2026-04"
+  claude-sonnet-4-6:
+    input_usd_per_mtok: 3.0
+    output_usd_per_mtok: 15.0
+    tokenizer: claude
+    tokenizer_version: "claude-2026-04"
+  claude-haiku-4-5:
+    input_usd_per_mtok: 0.80
+    output_usd_per_mtok: 4.0
+    tokenizer: claude
+    tokenizer_version: "claude-2026-04"
