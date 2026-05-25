@@ -28,6 +28,7 @@ def test_load_bundle_provides_all_built_in_profiles():
         "newsapi_paid_production",
         "sec_edgar_default",
         "volume_oi_context_derived",
+        "yfinance_news_research",
         "yfinance_research",
     ]
 

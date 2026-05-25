@@ -34,6 +34,7 @@ from .iv_history import (
     median_iv_from_chain_rows,
 )
 from .ledger import append as ledger_append
+from .ml import MLDirectionAdapter, MLDirectionSignal
 from .llm import LLMClient, SYNTHESIS_PROMPT_VERSION, synthesise
 from .profiles import ensure_default_profiles
 from .registry import ProviderRegistry
@@ -150,6 +151,7 @@ def analyze(
     sec_edgar_adapter: SECEdgarAdapter | None = None,
     volume_oi_adapter: VolumeOIContextAdapter | None = None,
     news_adapter: YahooNewsAdapter | None = None,
+    ml_direction_adapter: MLDirectionAdapter | None = None,
     horizon_days: int = 14,
     max_loss_usd: float | None = None,
     risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
@@ -296,6 +298,13 @@ def analyze(
         )
         iv_rank_summary = compute_iv_rank(ticker, current_iv=atm_iv_today)
 
+    # Optional per-ticker ML direction signal (Alt-3 v0). Informational only —
+    # the verdict path remains template_only / LLM-driven and the fail-closed
+    # validator is unchanged.
+    ml_signal: MLDirectionSignal | None = None
+    if ml_direction_adapter is not None:
+        ml_signal = ml_direction_adapter.signal(ticker)
+
     screener_inputs = ScreenerInputs(
         ticker=ticker,
         spot=spot,
@@ -306,6 +315,7 @@ def analyze(
         days_to_event=days_to_event,
         hv20_annual=hv20_annual,
         iv_rank_summary=iv_rank_summary,
+        ml_signal=(ml_signal.to_dict() if ml_signal is not None else None),
         thresholds=ScreenerThresholds(
             min_dte=max(1, horizon_days // 2),
             max_dte=max(horizon_days * 3, 45),

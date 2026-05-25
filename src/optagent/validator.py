@@ -144,7 +144,7 @@ def _looks_like(provider_id: str, kind: str) -> bool:
     if kind == "macro":
         return provider_id == "fred_default"
     if kind == "news_factual":
-        return provider_id.startswith("newsapi")
+        return provider_id.startswith("newsapi") or provider_id == "yfinance_news_research"
     if kind == "sec_filings":
         return provider_id == "sec_edgar_default"
     return False
@@ -159,7 +159,7 @@ def _classify(provider_id: str) -> str:
         return "macro"
     if provider_id == "sec_edgar_default":
         return "sec_filings"
-    if provider_id.startswith("newsapi"):
+    if provider_id.startswith("newsapi") or provider_id == "yfinance_news_research":
         return "news_factual"
     return "unknown"
 

@@ -31,6 +31,17 @@ _DEFAULT_PROFILES: list[ProviderProfile] = [
         terms_url="https://pypi.org/project/yfinance/",
         profile_version="2026-05-25",
     ),
+    # Distinct profile for Yahoo News headlines accessed via yfinance.Ticker.news.
+    # Same Yahoo personal/research-use posture as yfinance_research, but a
+    # separate id so the validator's TTL classifier maps it to `news_factual`
+    # (not `options_chain`) and so per-publisher attribution can evolve here.
+    ProviderProfile(
+        id="yfinance_news_research",
+        permitted_use=PermittedUse.research_only,
+        redistribution=Redistribution.none,
+        terms_url="https://pypi.org/project/yfinance/",
+        profile_version="2026-05-26",
+    ),
     ProviderProfile(
         id="fred_default",
         permitted_use=PermittedUse.production_safe,

@@ -10,6 +10,15 @@ profiles:
     terms_url: https://pypi.org/project/yfinance/
     profile_version: "2026-05-25"
 
+  - id: yfinance_news_research
+    permitted_use: research_only
+    redistribution: none
+    entitlement_required: false
+    rate_limit_qpm: null
+    attribution_string: null
+    terms_url: https://pypi.org/project/yfinance/
+    profile_version: "2026-05-26"
+
   - id: fred_default
     permitted_use: production_safe
     redistribution: attribution

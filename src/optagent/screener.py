@@ -61,6 +61,7 @@ class ScreenerInputs:
     days_to_event: int | None = None  # min(days_to_earnings, days_to_FOMC) etc.
     hv20_annual: float | None = None  # annualised 20-day realised vol (decimal)
     iv_rank_summary: dict | None = None  # see optagent.iv_history.compute_iv_rank
+    ml_signal: dict | None = None  # see optagent.ml.MLDirectionSignal.to_dict()
     thresholds: ScreenerThresholds = ScreenerThresholds()
 
 
@@ -274,6 +275,7 @@ def screen(inp: ScreenerInputs, _run_config: RunConfig | None = None) -> Screene
             "hv20_annual": inp.hv20_annual,
             "iv_richness_summary": _iv_richness_summary(candidates, inp.hv20_annual),
             "iv_rank_summary": inp.iv_rank_summary,
+            "ml_signal": inp.ml_signal,
             "n_rows_in": len(inp.rows),
             "n_candidates": len(candidates),
             "n_rejected": len(rejected),

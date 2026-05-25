@@ -22,7 +22,7 @@ from ..registry import ProviderRegistry
 from ..schemas import Confidence, Envelope, MarketSession
 
 
-NEWS_PROFILE_ID = "yfinance_research"
+NEWS_PROFILE_ID = "yfinance_news_research"
 
 
 def _utc_now() -> datetime:
@@ -145,12 +145,35 @@ class YahooNewsAdapter:
         return self._envelope({"ticker": ticker, "items": items}, Confidence.ok)
 
 
+def _strip_delimiters(text: str) -> str:
+    """Close the delimiter-escape vector Codex R3 flagged.
+
+    If an article body contained the literal `</news_excerpt>` (or its open
+    variant), the LLM could read it as the end of the data section and
+    interpret following text as instructions. We replace the angle brackets
+    with safe inline placeholders before wrapping.
+    """
+
+    return (
+        text
+        .replace("<news_excerpt", "&lt;news_excerpt")
+        .replace("</news_excerpt", "&lt;/news_excerpt")
+        .replace("<sec_excerpt", "&lt;sec_excerpt")
+        .replace("</sec_excerpt", "&lt;/sec_excerpt")
+    )
+
+
 def excerpts_from_envelope(env: Envelope, max_chars: int = 200) -> list[tuple[str, str]]:
     """Turn a news envelope into `(tool_call_id, excerpt_text)` tuples.
 
     Used by the orchestrator to feed the LLM prompt-builder. The excerpt
     is the title + a truncated summary — short, factual, and bounded so
     a single excessively-long article cannot consume the LLM's budget.
+
+    The returned ids carry an `#item-N` suffix so an audit consumer can map
+    the LLM's cited string back to a specific headline. The validator
+    correctly rejects them as `tool_call_id`s (they're not envelope ids);
+    LLMs should cite the parent envelope's id instead.
     """
 
     if env.value is None:
@@ -160,15 +183,15 @@ def excerpts_from_envelope(env: Envelope, max_chars: int = 200) -> list[tuple[st
         return []
     out: list[tuple[str, str]] = []
     for i, item in enumerate(items):
-        body_lines = [f"title: {item.get('title', '')}"]
+        title = _strip_delimiters(str(item.get("title", "")))
+        body_lines = [f"title: {title}"]
         if item.get("summary"):
-            body_lines.append(f"summary: {item['summary'][:max_chars]}")
+            summary = _strip_delimiters(str(item["summary"]))[:max_chars]
+            body_lines.append(f"summary: {summary}")
         if item.get("publisher"):
             body_lines.append(f"publisher: {item['publisher']}")
         if item.get("pub_date"):
             body_lines.append(f"published: {item['pub_date']}")
         excerpt = "\n".join(body_lines)
-        # The id couples the excerpt to a specific envelope tool_call_id so
-        # the LLM can cite it (and the validator can verify the citation).
         out.append((f"{env.tool_call_id}#item-{i}", excerpt))
     return out

@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -26,6 +27,28 @@ from typing import Iterable
 DEFAULT_HISTORY_DIR = Path("data/iv_history")
 DEFAULT_MIN_OBSERVATIONS = 30
 DEFAULT_WINDOW_OBSERVATIONS = 252  # ~1 trading year
+
+# Strict ticker regex used BEFORE constructing any file path. Closes the
+# path-traversal hole Codex R3 identified.
+# Letters/digits, optionally followed by a SINGLE `.X` or `-X` suffix where X
+# is also alphanumeric. Catches BRK.B / BF-B style symbols but rejects bare
+# trailing dots (`AAPL..`) and consecutive separators.
+_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{0,9}([.\-][A-Z0-9]{1,5})?$")
+
+# Tolerated forward-clock skew when checking `as_of`. Anything beyond
+# this counts as poisoned and is rejected.
+_FUTURE_SKEW = timedelta(minutes=5)
+
+
+class IVHistoryError(ValueError):
+    """Raised for unsafe ticker symbols or other input violations."""
+
+
+def _safe_ticker(ticker: str) -> str:
+    t = (ticker or "").upper().strip()
+    if not _TICKER_RE.match(t):
+        raise IVHistoryError(f"unsafe_ticker_for_iv_history_path: {ticker!r}")
+    return t
 
 
 @dataclass(frozen=True)
@@ -64,7 +87,8 @@ class IVSnapshot:
 
 def _path_for(ticker: str, base: Path | None = None) -> Path:
     base = base or DEFAULT_HISTORY_DIR
-    return base / f"{ticker.upper()}.jsonl"
+    safe = _safe_ticker(ticker)
+    return base / f"{safe}.jsonl"
 
 
 def append_snapshot(
@@ -82,15 +106,32 @@ def append_snapshot(
 
     if not math.isfinite(atm_iv_median) or atm_iv_median <= 0:
         return None
+    try:
+        safe = _safe_ticker(ticker)
+    except IVHistoryError:
+        return None
     base = base or DEFAULT_HISTORY_DIR
     base.mkdir(parents=True, exist_ok=True)
+    as_of_resolved = as_of or datetime.now(timezone.utc)
+    # Reject future timestamps beyond a small clock-skew tolerance — closes
+    # the timestamp-poisoning vector Codex R3 flagged.
+    if as_of_resolved > datetime.now(timezone.utc) + _FUTURE_SKEW:
+        return None
+    # hv20 must be a finite positive number to be recorded; otherwise None.
+    hv = None
+    if (
+        hv20_annual is not None
+        and math.isfinite(hv20_annual)
+        and hv20_annual > 0
+    ):
+        hv = float(hv20_annual)
     snap = IVSnapshot(
-        ticker=ticker.upper(),
-        as_of=as_of or datetime.now(timezone.utc),
+        ticker=safe,
+        as_of=as_of_resolved,
         atm_iv_median=float(atm_iv_median),
-        hv20_annual=(float(hv20_annual) if hv20_annual and math.isfinite(hv20_annual) else None),
+        hv20_annual=hv,
     )
-    path = _path_for(ticker, base)
+    path = _path_for(safe, base)
     with path.open("a", encoding="utf-8") as f:
         f.write(snap.to_json())
         f.write("\n")
@@ -98,19 +139,27 @@ def append_snapshot(
 
 
 def read_history(ticker: str, base: Path | None = None) -> list[IVSnapshot]:
-    path = _path_for(ticker, base)
+    try:
+        path = _path_for(ticker, base)
+    except IVHistoryError:
+        return []
     if not path.exists():
         return []
     out: list[IVSnapshot] = []
+    cutoff = datetime.now(timezone.utc) + _FUTURE_SKEW
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                out.append(IVSnapshot.from_json(line))
+                snap = IVSnapshot.from_json(line)
             except (ValueError, KeyError):
                 continue
+            # Ignore poisoned future-dated rows when reading back.
+            if snap.as_of > cutoff:
+                continue
+            out.append(snap)
     return out
 
 

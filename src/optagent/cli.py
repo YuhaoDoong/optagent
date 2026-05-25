@@ -86,6 +86,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the Yahoo News adapter even when yfinance is installed.",
     )
+    analyze_p.add_argument(
+        "--enable-ml",
+        action="store_true",
+        help=(
+            "Train/use the per-ticker ML direction model (Alt-3 v0). First "
+            "query for a ticker trains a fresh model (~5s); subsequent queries "
+            "within %(default)s days hit the cache." % {"default": 7}
+        ),
+    )
 
     return parser
 
@@ -147,12 +156,19 @@ def main(argv: list[str] | None = None) -> int:
 
             news_adapter = YahooNewsAdapter(registry)
 
+        ml_adapter = None
+        if args.enable_ml:
+            from .ml import MLDirectionAdapter
+
+            ml_adapter = MLDirectionAdapter()
+
         result = analyze(
             args.ticker.upper(),
             registry=registry,
             fred_adapter=fred_adapter,
             sec_edgar_adapter=sec_adapter,
             news_adapter=news_adapter,
+            ml_direction_adapter=ml_adapter,
             horizon_days=args.horizon,
             max_loss_usd=args.max_loss,
             ledger_dir=args.ledger_dir,

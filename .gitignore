@@ -19,6 +19,7 @@ env/
 data/ledger/
 data/cache/
 data/iv_history/
+data/ml_cache/
 *.parquet
 *.pkl
 
