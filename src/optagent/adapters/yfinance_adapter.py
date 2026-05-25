@@ -52,6 +52,30 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _read_fast_info_field(fast_info: Any, field: str) -> Any:
+    """Read a field from yfinance's `FastInfo` across versions.
+
+    Newer yfinance ships a `FastInfo` class whose `.get(key)` always returns
+    None even though `.last_price` and `["last_price"]` work. Prefer attribute
+    access, fall back to subscript, then to `.get` for older shims.
+    """
+
+    val = getattr(fast_info, field, None)
+    if val is not None:
+        return val
+    try:
+        return fast_info[field]
+    except (KeyError, TypeError):
+        pass
+    getter = getattr(fast_info, "get", None)
+    if callable(getter):
+        try:
+            return getter(field)
+        except Exception:
+            return None
+    return None
+
+
 def _classify_session(now: datetime) -> MarketSession:
     """Cheap, timezone-agnostic session classifier.
 
@@ -146,8 +170,8 @@ class YFinanceAdapter:
             return blocked
         try:
             tk = self._yf.Ticker(ticker)
-            info = tk.fast_info  # yfinance >=0.2 attribute, dict-like
-            last = info.get("last_price") if hasattr(info, "get") else None
+            info = tk.fast_info
+            last = _read_fast_info_field(info, "last_price")
             if last is None or last <= 0:
                 return self._unavailable(f"no_last_price_for_{ticker}")
             return self._ok({"ticker": ticker, "last": float(last)})
