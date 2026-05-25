@@ -154,6 +154,161 @@ def test_analyze_no_ledger_flag(tmp_path: Path):
     assert not list(tmp_path.glob("*.jsonl"))
 
 
+_TTL_TABLE = {
+    "price": {"rth": 10, "after_hours": 300, "critical": True},
+    "options_chain": {
+        "rth_low_vol": 30,
+        "rth_high_vol_or_near_expiry": 15,
+        "after_hours": 300,
+        "critical": True,
+    },
+}
+_PRICE_TABLE = {
+    "price_table_version": "test-1",
+    "default_model": "claude-haiku-4-5",
+    "limits": {
+        "max_input_tokens": 60000,
+        "max_output_tokens": 2000,
+        "max_retries": 2,
+        "timeout_s": 45,
+        "safety_margin": 0.20,
+        "cap_usd": 5.00,
+    },
+    "models": {
+        "claude-haiku-4-5": {
+            "input_usd_per_mtok": 0.80,
+            "output_usd_per_mtok": 4.0,
+            "tokenizer_version": "claude-2026-04",
+        },
+    },
+}
+
+
+class _FakeLLMClient:
+    """Returns the canned `tool_input` regardless of prompt."""
+
+    def __init__(self, tool_input: dict) -> None:
+        self._tool_input = tool_input
+        self.calls = 0
+
+    def synthesise(self, *, system, user_prompt, tool, max_output_tokens, timeout_s):
+        self.calls += 1
+        return self._tool_input, {"stop_reason": "tool_use"}
+
+
+def _setup_liquid_run():
+    expiry = _expiry_iso(20)
+    calls = [
+        _row("AAPL_C200", 200, 2.40, 2.60, oi=5000, volume=300),
+        _row("AAPL_C210", 210, 1.40, 1.50, oi=4000, volume=200),
+    ]
+    puts = [_row("AAPL_P180", 180, 1.20, 1.40, oi=3000, volume=200)]
+    yf = _fake_yf_module(expiry, calls, puts)
+    registry = ProviderRegistry()
+    adapter = YFinanceAdapter(registry, yf_module=yf)
+    return registry, adapter
+
+
+def test_llm_path_clean_long_call_passes_validator(tmp_path: Path):
+    registry, adapter = _setup_liquid_run()
+    client = _FakeLLMClient(
+        {
+            "direction": "LONG_CALL",
+            "chosen_occ": "AAPL_C200",
+            "conviction": 0.6,
+            "primary_reasons": ["liquid ATM call within DTE window"],
+            "tool_call_ids_used": [],  # filled in below from envelopes
+        }
+    )
+
+    # Tap the adapter's tool_call_ids by calling once to seed citations.
+    # Easier: use a fake that introspects later. We can't inject tcids here
+    # without re-running, so let the client cite both envelopes by index.
+    class _ClientWithDynamicTCIDs:
+        def synthesise(self, *, system, user_prompt, tool, max_output_tokens, timeout_s):
+            # Extract the two available tool_call_ids from the prompt body.
+            import re
+
+            tcids = re.findall(r"(tc-[0-9a-f]+)", user_prompt)
+            tcids = list(dict.fromkeys(tcids))[:2]
+            return (
+                {
+                    "direction": "LONG_CALL",
+                    "chosen_occ": "AAPL_C200",
+                    "conviction": 0.6,
+                    "primary_reasons": ["liquid ATM call within DTE window"],
+                    "tool_call_ids_used": tcids,
+                },
+                {"stop_reason": "tool_use"},
+            )
+
+    result = analyze(
+        "AAPL",
+        registry=registry,
+        yfinance_adapter=adapter,
+        ledger_dir=tmp_path,
+        enable_llm=True,
+        llm_client=_ClientWithDynamicTCIDs(),
+        model_version="claude-haiku-4-5",
+        price_table=_PRICE_TABLE,
+        ttl_table=_TTL_TABLE,
+    )
+    assert result.verdict.action is VerdictAction.long_call
+    assert result.verdict.contract is not None
+    assert result.verdict.contract.occ_symbol == "AAPL_C200"
+
+
+def test_llm_path_hallucinated_occ_is_downgraded_to_skip(tmp_path: Path):
+    registry, adapter = _setup_liquid_run()
+    client = _FakeLLMClient(
+        {
+            "direction": "LONG_CALL",
+            "chosen_occ": "AAPL_C999_HALLUCINATED",
+            "primary_reasons": ["I made this up"],
+            "tool_call_ids_used": [],
+        }
+    )
+    result = analyze(
+        "AAPL",
+        registry=registry,
+        yfinance_adapter=adapter,
+        ledger_dir=tmp_path,
+        enable_llm=True,
+        llm_client=client,
+        model_version="claude-haiku-4-5",
+        price_table=_PRICE_TABLE,
+        ttl_table=_TTL_TABLE,
+    )
+    assert result.verdict.action is VerdictAction.skip
+    # The LLM-builder catches phantom OCC up front; the validator catches it
+    # if it sneaks past. Either way: SKIP.
+
+
+def test_llm_path_unknown_model_falls_back_to_skip(tmp_path: Path):
+    registry, adapter = _setup_liquid_run()
+    client = _FakeLLMClient(
+        {
+            "direction": "LONG_CALL",
+            "chosen_occ": "AAPL_C200",
+            "primary_reasons": ["..."],
+            "tool_call_ids_used": [],
+        }
+    )
+    result = analyze(
+        "AAPL",
+        registry=registry,
+        yfinance_adapter=adapter,
+        ledger_dir=tmp_path,
+        enable_llm=True,
+        llm_client=client,
+        model_version="gpt-5-not-in-price-table",
+        price_table=_PRICE_TABLE,
+        ttl_table=_TTL_TABLE,
+    )
+    assert result.verdict.action is VerdictAction.skip
+    assert client.calls == 0  # never reached the LLM
+
+
 def test_analyze_no_expiry_in_window_returns_skip(tmp_path: Path):
     # Expiry 200 days out → outside default screener band of ≤ 3×horizon=42.
     expiry = _expiry_iso(200)

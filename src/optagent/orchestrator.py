@@ -1,24 +1,31 @@
 """End-to-end run orchestration.
 
-Wires the data adapters into the screener, picks a verdict (template_only
-mode for v1 release), writes the audit ledger, and returns the rendered memo.
+Wires the data adapters into the screener, optionally calls the LLM for
+synthesis, runs the fail-closed validator, writes the audit ledger, and
+returns the rendered memo.
 
-No LLM call is made in v1 release; the verdict is derived deterministically
-from the screener output.
+Default run mode is `template_only` (no LLM call). When `enable_llm=True`
+AND the deterministic budget pre-check passes, the orchestrator constructs
+an LLM prompt from the screener output, calls the supplied `LLMClient`,
+and runs the AC-12 validator over the result. Any validator failure
+downgrades the verdict to SKIP with a structured reason.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from . import DISCLAIMER
 from .adapters import YFinanceAdapter
+from .budget import BudgetResult, precheck as budget_precheck
 from .ledger import append as ledger_append
+from .llm import LLMClient, SYNTHESIS_PROMPT_VERSION, synthesise
 from .registry import ProviderRegistry
 from .render import render_template
 from .schemas import (
+    AuditRecord,
     Citation,
     Confidence,
     Envelope,
@@ -37,6 +44,7 @@ from .screener import (
     screen,
     split_by_bias,
 )
+from .validator import validate
 
 
 CRITICAL_PROVIDERS = ("yfinance_research",)
@@ -68,25 +76,7 @@ class AnalyzeResult:
         }
 
 
-def _bias_from_price_history(_prices: list[float]) -> str:
-    """Conservative MVP bias: always 'neutral' in template_only mode.
-
-    Direction inference requires either OHLCV momentum logic (task5) or
-    LLM synthesis (task16), neither of which ships in this round. Returning
-    'neutral' enforces SKIP from the template renderer — the safest default
-    for the v1 release.
-    """
-
-    return "neutral"
-
-
 def _build_yfinance_profile_if_missing(registry: ProviderRegistry) -> None:
-    """Register the yfinance profile if the caller did not preload it.
-
-    Keeps `analyze()` callable from a script without forcing the user to wire
-    up the YAML loader first.
-    """
-
     try:
         registry.get("yfinance_research")
     except LookupError:
@@ -110,10 +100,11 @@ def _build_skip_verdict(reason: SkipReason, primary_reasons: list[str]) -> Verdi
     )
 
 
-def _build_long_verdict(
+def _build_template_long_verdict(
     contract: OptionContract,
-    citations: list[Citation],
-    primary_reasons: list[str],
+    chain_env: Envelope,
+    price_env: Envelope,
+    dte: int,
 ) -> Verdict:
     return Verdict(
         disclaimer=DISCLAIMER,
@@ -123,9 +114,18 @@ def _build_long_verdict(
             else VerdictAction.long_put
         ),
         contract=contract,
-        conviction=None,  # template_only mode does not assign conviction
-        primary_reasons=primary_reasons,
-        citations=citations,
+        conviction=None,
+        primary_reasons=[f"Most-liquid {contract.right.value} in the {dte}-DTE window."],
+        citations=[
+            Citation(
+                tool_call_id=chain_env.tool_call_id,
+                provider_profile_id=chain_env.provider_profile_id,
+            ),
+            Citation(
+                tool_call_id=price_env.tool_call_id,
+                provider_profile_id=price_env.provider_profile_id,
+            ),
+        ],
     )
 
 
@@ -139,12 +139,20 @@ def analyze(
     risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
     ledger_dir: Path | None = None,
     write_ledger: bool = True,
+    enable_llm: bool = False,
+    llm_client: LLMClient | None = None,
+    model_version: str | None = None,
+    price_table: Mapping[str, Any] | None = None,
+    ttl_table: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> AnalyzeResult:
     """Run an end-to-end analysis for `ticker`.
 
-    Parameters mirror the CLI flags. `registry` and `yfinance_adapter` are
-    injectable so tests can pass fakes; production callers leave them None
-    and the orchestrator builds defaults.
+    `enable_llm=True` requires `llm_client`, `model_version`, `price_table`,
+    and `ttl_table` to be supplied (loaded from `config/`). The LLM path:
+      1. budget pre-check (AC-11) — fall back to template_only on overrun.
+      2. synthesis via Claude tool_use.
+      3. fail-closed validator (AC-12.a-i).
+      4. ledger write + render.
     """
 
     started_at = datetime.now(timezone.utc)
@@ -158,6 +166,9 @@ def analyze(
         horizon_days=horizon_days,
         max_loss_usd=max_loss_usd,
         started_at=started_at,
+        enable_llm=enable_llm,
+        model_version=model_version,
+        prompt_version=SYNTHESIS_PROMPT_VERSION if enable_llm else "v0",
     )
     if not registry.is_bound():
         registry.bind(run_config)
@@ -174,7 +185,11 @@ def analyze(
         env.source for env in envelopes if env.confidence is Confidence.unavailable
     ]
 
-    if price_env.confidence is Confidence.unavailable or chain_env.confidence is Confidence.unavailable:
+    # Critical-provider check
+    if (
+        price_env.confidence is Confidence.unavailable
+        or chain_env.confidence is Confidence.unavailable
+    ):
         verdict = _build_skip_verdict(
             SkipReason.critical_provider_unavailable,
             [
@@ -195,6 +210,13 @@ def analyze(
             started_at=started_at,
             ledger_dir=ledger_dir,
             write_ledger=write_ledger,
+            validator_decisions=[
+                ValidatorDecision(
+                    check_id="critical_provider_check",
+                    passed=False,
+                    detail="price_or_chain_unavailable",
+                )
+            ],
         )
 
     chain_value = chain_env.value
@@ -234,20 +256,173 @@ def analyze(
             started_at=started_at,
             ledger_dir=ledger_dir,
             write_ledger=write_ledger,
+            validator_decisions=[
+                ValidatorDecision(check_id="no_candidates", passed=False, detail="0 candidates"),
+            ],
         )
 
-    # Template-only mode: no LLM call → conservative bias → SKIP unless
-    # the caller has opted in to a direction. We keep the contract picks
-    # available for the LLM round to take over later.
-    bias = _bias_from_price_history([spot])
-    if bias == "neutral":
+    # ---- LLM path ----
+    if enable_llm and llm_client is not None and price_table is not None and ttl_table is not None:
+        chosen_model = model_version or price_table.get("default_model")
+        return _run_llm_path(
+            run_config=run_config,
+            chosen_model=chosen_model,
+            price_table=price_table,
+            ttl_table=ttl_table,
+            llm_client=llm_client,
+            spot=spot,
+            ticker=ticker,
+            chain_env=chain_env,
+            price_env=price_env,
+            envelopes=envelopes,
+            screener_output=screener_output,
+            unavailable_warnings=unavailable_warnings,
+            registry=registry,
+            started_at=started_at,
+            ledger_dir=ledger_dir,
+            write_ledger=write_ledger,
+            dte=dte,
+        )
+
+    # ---- template_only fall-through ----
+    return _run_template_only_path(
+        run_config=run_config,
+        ticker=ticker,
+        chain_env=chain_env,
+        price_env=price_env,
+        envelopes=envelopes,
+        screener_output=screener_output,
+        unavailable_warnings=unavailable_warnings,
+        registry=registry,
+        started_at=started_at,
+        ledger_dir=ledger_dir,
+        write_ledger=write_ledger,
+        dte=dte,
+    )
+
+
+def _run_template_only_path(
+    *,
+    run_config: RunConfig,
+    ticker: str,
+    chain_env: Envelope,
+    price_env: Envelope,
+    envelopes: list[Envelope],
+    screener_output: ScreenerOutput,
+    unavailable_warnings: list[str],
+    registry: ProviderRegistry,
+    started_at: datetime,
+    ledger_dir: Path | None,
+    write_ledger: bool,
+    dte: int,
+) -> AnalyzeResult:
+    # template_only mode: no LLM → neutral bias → SKIP (safe default).
+    verdict = _build_skip_verdict(
+        SkipReason.no_candidates_after_screen,
+        [
+            "Template-only mode (no LLM) produced 'neutral' direction; "
+            "the agent defaults to SKIP rather than guessing.",
+            f"{len(screener_output.candidates)} candidate(s) survived the screener; "
+            "pass --enable-llm to let the LLM synthesise a verdict.",
+        ],
+    )
+    memo = render_template(verdict, envelopes)
+    return _finalize(
+        run_config,
+        verdict,
+        memo,
+        envelopes,
+        screener_output=screener_output,
+        unavailable_warnings=unavailable_warnings,
+        registry=registry,
+        started_at=started_at,
+        ledger_dir=ledger_dir,
+        write_ledger=write_ledger,
+        validator_decisions=[
+            ValidatorDecision(check_id="template_only_default", passed=True, detail="no-LLM mode"),
+        ],
+    )
+
+
+def _run_llm_path(
+    *,
+    run_config: RunConfig,
+    chosen_model: str | None,
+    price_table: Mapping[str, Any],
+    ttl_table: Mapping[str, Mapping[str, Any]],
+    llm_client: LLMClient,
+    spot: float,
+    ticker: str,
+    chain_env: Envelope,
+    price_env: Envelope,
+    envelopes: list[Envelope],
+    screener_output: ScreenerOutput,
+    unavailable_warnings: list[str],
+    registry: ProviderRegistry,
+    started_at: datetime,
+    ledger_dir: Path | None,
+    write_ledger: bool,
+    dte: int,
+) -> AnalyzeResult:
+    from .llm import build_user_prompt
+
+    if not chosen_model:
         verdict = _build_skip_verdict(
-            SkipReason.no_candidates_after_screen,  # closest enum match for "no direction"
+            SkipReason.unknown_model_pricing,
+            ["No model_version supplied and price_table has no default_model."],
+        )
+        memo = render_template(verdict, envelopes)
+        return _finalize(
+            run_config,
+            verdict,
+            memo,
+            envelopes,
+            screener_output=screener_output,
+            unavailable_warnings=unavailable_warnings,
+            registry=registry,
+            started_at=started_at,
+            ledger_dir=ledger_dir,
+            write_ledger=write_ledger,
+            validator_decisions=[
+                ValidatorDecision(check_id="model_version_missing", passed=False),
+            ],
+        )
+
+    # Budget pre-check (AC-11)
+    preview_prompt = build_user_prompt(
+        ticker=ticker,
+        spot=spot,
+        candidates=screener_output.candidates,
+        envelopes=envelopes,
+    )
+    budget = budget_precheck(
+        prompt_text=preview_prompt,
+        model_version=chosen_model,
+        price_table=price_table,
+    )
+
+    budget_decision = ValidatorDecision(
+        check_id="budget_precheck",
+        passed=budget.proceed,
+        detail=(
+            f"est=${budget.estimated_usd:.4f} tokens={budget.input_tokens} "
+            f"model={chosen_model}"
+            if budget.proceed
+            else (budget.fallback_reason or "budget_failed")
+        ),
+    )
+
+    if not budget.proceed:
+        skip_reason = (
+            SkipReason.unknown_model_pricing
+            if budget.fallback_reason == "unknown_model_pricing"
+            else SkipReason.budget_exceeded
+        )
+        verdict = _build_skip_verdict(
+            skip_reason,
             [
-                "Template-only mode (no LLM) produced 'neutral' direction; "
-                "the agent defaults to SKIP rather than guessing.",
-                f"{len(screener_output.candidates)} candidate(s) survived the screener; "
-                "enable --enable-llm in a future round to let the LLM synthesise a verdict.",
+                f"LLM mode requested but budget pre-check failed: {budget.fallback_reason}",
+                "Falling back to template_only behaviour for this run.",
             ],
         )
         memo = render_template(verdict, envelopes)
@@ -262,30 +437,44 @@ def analyze(
             started_at=started_at,
             ledger_dir=ledger_dir,
             write_ledger=write_ledger,
+            validator_decisions=[budget_decision],
+            budget_estimate_usd=budget.estimated_usd,
+            model_version=chosen_model,
+            price_table_version=budget.price_table_version,
+            tokenizer_version=budget.tokenizer_version,
+            fallback_reason=budget.fallback_reason,
         )
 
-    # Non-neutral branches (reserved for the LLM round):
-    best_call, best_put = split_by_bias(screener_output.candidates, bias)
-    pick = best_call if bias == "bullish" else best_put
-    if pick is None:
-        verdict = _build_skip_verdict(
-            SkipReason.no_candidates_after_screen,
-            [f"No {bias} candidate survived the screener."],
-        )
-    else:
-        verdict = _build_long_verdict(
-            pick,
-            citations=[
-                Citation(tool_call_id=chain_env.tool_call_id, provider_profile_id=chain_env.provider_profile_id),
-                Citation(tool_call_id=price_env.tool_call_id, provider_profile_id=price_env.provider_profile_id),
-            ],
-            primary_reasons=[f"Most-liquid {pick.right.value} in the {dte}-DTE window."],
-        )
-    memo = render_template(verdict, envelopes)
+    # Synthesis
+    synthesis = synthesise(
+        client=llm_client,
+        disclaimer=DISCLAIMER,
+        ticker=ticker,
+        spot=spot,
+        candidates=screener_output.candidates,
+        envelopes=envelopes,
+        max_output_tokens=budget.max_output_tokens,
+    )
+
+    pre_render = render_template(synthesis.verdict, envelopes)
+
+    outcome = validate(
+        verdict=synthesis.verdict,
+        candidates=screener_output.candidates,
+        envelopes=envelopes,
+        llm_tool_input=synthesis.tool_input,
+        registry=registry,
+        ttl_table=ttl_table,
+        rendered_output=pre_render,
+    )
+
+    final_verdict = outcome.final_verdict
+    final_memo = render_template(final_verdict, envelopes)
+
     return _finalize(
         run_config,
-        verdict,
-        memo,
+        final_verdict,
+        final_memo,
         envelopes,
         screener_output=screener_output,
         unavailable_warnings=unavailable_warnings,
@@ -293,6 +482,11 @@ def analyze(
         started_at=started_at,
         ledger_dir=ledger_dir,
         write_ledger=write_ledger,
+        validator_decisions=[budget_decision] + outcome.decisions,
+        budget_estimate_usd=budget.estimated_usd,
+        model_version=chosen_model,
+        price_table_version=budget.price_table_version,
+        tokenizer_version=budget.tokenizer_version,
     )
 
 
@@ -308,6 +502,12 @@ def _finalize(
     started_at: datetime,
     ledger_dir: Path | None,
     write_ledger: bool,
+    validator_decisions: list[ValidatorDecision] | None = None,
+    budget_estimate_usd: float | None = None,
+    model_version: str | None = None,
+    price_table_version: str | None = None,
+    tokenizer_version: str | None = None,
+    fallback_reason: str | None = None,
 ) -> AnalyzeResult:
     """Persist the audit row and return the final result object."""
 
@@ -315,8 +515,6 @@ def _finalize(
 
     ledger_path: Path | None = None
     if write_ledger:
-        from .schemas import AuditRecord
-
         record = AuditRecord(
             run_id=run_config.run_id,
             ticker=run_config.ticker,
@@ -329,17 +527,18 @@ def _finalize(
             screener_input=(screener_output.inputs_summary if screener_output else {}),
             screener_output=(screener_output.candidates if screener_output else []),
             prompt_version=run_config.prompt_version,
-            tokenizer_version=run_config.tokenizer_version,
-            model_version=run_config.model_version,
-            price_table_version=run_config.price_table_version,
+            tokenizer_version=tokenizer_version or run_config.tokenizer_version,
+            model_version=model_version or run_config.model_version,
+            price_table_version=price_table_version or run_config.price_table_version,
+            budget_estimate_usd=budget_estimate_usd,
             final_verdict=verdict,
-            validator_decisions=[
-                ValidatorDecision(check_id="template_only_default", passed=True),
-            ],
+            validator_decisions=validator_decisions
+            or [ValidatorDecision(check_id="default", passed=True)],
             unavailable_data_warnings=unavailable_warnings,
             profile_versions=registry.profile_versions(),
             started_at=started_at,
             finished_at=finished_at,
+            fallback_reason=fallback_reason,
         )
         ledger_path = ledger_append(record, base=ledger_dir)
 

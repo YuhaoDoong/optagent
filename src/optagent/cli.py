@@ -1,7 +1,8 @@
 """Command-line entry point: `optagent analyze <ticker> [...]`.
 
-Single subcommand for v1 release. Default mode is template_only (no LLM);
-`--enable-llm` is reserved for a later round.
+Default mode is template_only (no LLM). `--enable-llm` switches to the
+Claude tool_use synthesis path, gated by a deterministic budget pre-check
+and validated by the AC-12 fail-closed validator.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .config_loader import load_bundle
 from .orchestrator import analyze
 
 
@@ -45,7 +47,19 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze_p.add_argument(
         "--enable-llm",
         action="store_true",
-        help="(Reserved) Enable LLM synthesis. Not wired in this release; ignored.",
+        help="Call Claude for verdict synthesis. Requires ANTHROPIC_API_KEY.",
+    )
+    analyze_p.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Override the LLM model_version (default: price_table default_model).",
+    )
+    analyze_p.add_argument(
+        "--config-dir",
+        type=Path,
+        default=None,
+        help="Override the config directory (default: ./config).",
     )
 
     return parser
@@ -56,17 +70,39 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "analyze":
+        llm_client = None
+        price_table = None
+        ttl_table = None
+        model = None
+
         if args.enable_llm:
-            print(
-                "WARNING: --enable-llm has no effect in this release; running in template_only mode.",
-                file=sys.stderr,
-            )
+            try:
+                bundle = load_bundle(args.config_dir)
+            except FileNotFoundError as e:
+                print(f"ERROR: --enable-llm requires a config dir: {e}", file=sys.stderr)
+                return 2
+            price_table = bundle.price_table
+            ttl_table = bundle.ttl_table
+            model = args.model or price_table.get("default_model")
+            try:
+                from .llm import make_anthropic_client
+
+                llm_client = make_anthropic_client(model=model)
+            except RuntimeError as e:
+                print(f"ERROR: --enable-llm but Anthropic SDK is unavailable: {e}", file=sys.stderr)
+                return 2
+
         result = analyze(
             args.ticker.upper(),
             horizon_days=args.horizon,
             max_loss_usd=args.max_loss,
             ledger_dir=args.ledger_dir,
             write_ledger=not args.no_ledger,
+            enable_llm=args.enable_llm,
+            llm_client=llm_client,
+            model_version=model,
+            price_table=price_table,
+            ttl_table=ttl_table,
         )
         sys.stdout.write(result.memo)
         if result.ledger_path:
