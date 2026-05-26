@@ -21,6 +21,11 @@ from typing import Any
 import streamlit as st
 
 from optagent import DISCLAIMER, __version__
+from optagent.web.chat import (
+    ChatMessage,
+    chat_complete,
+    summarise_analysis_for_context,
+)
 from optagent.web.components import (
     candidate_table,
     candle_chart,
@@ -32,6 +37,7 @@ from optagent.web.components import (
     strategy_signal_table,
     verdict_badge,
 )
+from optagent.web.i18n import supported_languages, t
 
 
 # ---------------------------------------------------------------------------
@@ -45,11 +51,19 @@ st.set_page_config(
 )
 
 
+def _current_lang() -> str:
+    return st.session_state.get("lang", "en")
+
+
 def _disclaimer_banner() -> None:
+    lang = _current_lang()
+    msg = t("disclaimer.banner", lang, disclaimer=DISCLAIMER, version=__version__)
+    import html as _html
+    safe = _html.escape(msg)
     st.markdown(
         f"<div style='background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;"
         f"padding:8px 12px;font-weight:600;color:#78350f;margin-bottom:12px;'>"
-        f"⚠️ {DISCLAIMER} optagent v{__version__} is a research tool only.</div>",
+        f"{safe}</div>",
         unsafe_allow_html=True,
     )
 
@@ -98,41 +112,56 @@ def _verdict_card(verdict_dict: dict[str, Any]) -> None:
 
 
 def _sidebar() -> dict[str, Any]:
-    st.sidebar.title("optagent")
-    st.sidebar.caption(f"v{__version__}")
+    lang_options = supported_languages()
+    lang_keys = [k for k, _ in lang_options]
+    current_lang = st.session_state.get("lang", "en")
+    try:
+        idx = lang_keys.index(current_lang)
+    except ValueError:
+        idx = 0
+    chosen_label = st.sidebar.selectbox(
+        "🌐 Language / 语言",
+        options=[label for _, label in lang_options],
+        index=idx,
+    )
+    chosen_key = next(k for k, lbl in lang_options if lbl == chosen_label)
+    st.session_state["lang"] = chosen_key
+    lang = chosen_key
 
-    st.sidebar.subheader("Optional adapters")
+    st.sidebar.title(t("sidebar.title", lang))
+    st.sidebar.caption(t("sidebar.version", lang, version=__version__))
+
+    st.sidebar.subheader(t("sidebar.adapters", lang))
     fred_key = st.sidebar.text_input(
-        "FRED_API_KEY",
+        t("sidebar.fred_label", lang),
         type="password",
         value=os.environ.get("FRED_API_KEY", ""),
-        help="Set to enable macro context (10y/2y yields, VIX, CPI, Fed funds, USD index).",
+        help=t("sidebar.fred_help", lang),
     )
     user_agent = st.sidebar.text_input(
-        "SEC EDGAR User-Agent",
+        t("sidebar.sec_label", lang),
         value=os.environ.get("OPTAGENT_USER_AGENT", ""),
         placeholder="optagent/0.x (you@example.com)",
-        help="SEC EDGAR REQUIRES a contact email. Adapter fails closed without one.",
+        help=t("sidebar.sec_help", lang),
     )
 
-    st.sidebar.subheader("LLM (optional)")
-    enable_llm = st.sidebar.checkbox("Enable LLM synthesis", value=False)
+    st.sidebar.subheader(t("sidebar.llm_header", lang))
+    enable_llm = st.sidebar.checkbox(t("sidebar.enable_llm", lang), value=False)
+    auto_label = t("sidebar.auto_detect", lang)
     provider = st.sidebar.selectbox(
-        "Provider",
-        options=("auto-detect", "anthropic", "openai", "gemini"),
+        t("sidebar.provider", lang),
+        options=(auto_label, "anthropic", "openai", "gemini"),
         index=0,
         disabled=not enable_llm,
     )
-
-    enable_ml = st.sidebar.checkbox(
-        "Enable ML direction signal (Alt-3 v0)", value=False
-    )
+    enable_ml = st.sidebar.checkbox(t("sidebar.enable_ml", lang), value=False)
 
     return {
+        "lang": lang,
         "fred_key": fred_key,
         "user_agent": user_agent,
         "enable_llm": enable_llm,
-        "provider": (None if provider == "auto-detect" else provider),
+        "provider": (None if provider == auto_label else provider),
         "enable_ml": enable_ml,
     }
 
@@ -142,24 +171,22 @@ def _sidebar() -> dict[str, Any]:
 
 
 def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
-    st.header("📊 Single-ticker analysis")
-    st.caption(
-        "Equivalent to running `optagent analyze <ticker>` from the CLI. Outputs a "
-        "structured research memo with the same disclaimer-first contract."
-    )
+    lang = sidebar_opts.get("lang", "en")
+    st.header(t("analyze.header", lang))
+    st.caption(t("analyze.caption", lang))
 
     col_l, col_r = st.columns([2, 1])
     with col_l:
-        ticker = st.text_input("Ticker", value="AAPL", max_chars=10).upper().strip()
+        ticker = st.text_input(t("analyze.ticker_label", lang), value="AAPL", max_chars=10).upper().strip()
     with col_r:
-        horizon = st.number_input("Horizon (days)", min_value=1, max_value=120, value=14)
+        horizon = st.number_input(t("analyze.horizon_label", lang), min_value=1, max_value=120, value=14)
 
     max_loss = st.number_input(
-        "Max-loss budget (USD, optional)", min_value=0.0, value=0.0, step=100.0,
+        t("analyze.max_loss_label", lang), min_value=0.0, value=0.0, step=100.0,
     )
     max_loss_v = max_loss if max_loss > 0 else None
 
-    if not st.button("Analyze", type="primary"):
+    if not st.button(t("analyze.run_btn", lang), type="primary"):
         return
 
     # Codex web-audit fix: DO NOT write sidebar secrets to os.environ.
@@ -215,7 +242,7 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
             st.error(f"LLM unavailable: {e}")
             st.stop()
 
-    with st.spinner(f"Running analysis on {ticker}..."):
+    with st.spinner(t("analyze.spinner", lang, ticker=ticker)):
         result = analyze(
             ticker,
             registry=registry,
@@ -232,9 +259,17 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
             ttl_table=ttl_table,
         )
 
+    # Stash analysis context for the chat tab. summarise_analysis_for_context
+    # picks a compact subset (no Streamlit-incompatible types) so it survives
+    # the session_state pickle/hash round-trip cleanly.
+    from datetime import datetime as _dt
+    st.session_state["last_analysis_summary"] = summarise_analysis_for_context(result)
+    st.session_state["last_analysis_ticker"] = ticker
+    st.session_state["last_analysis_ts"] = _dt.utcnow().isoformat(timespec="seconds")
+
     _verdict_card(verdict_badge(result.verdict))
     if result.verdict.primary_reasons:
-        st.markdown("**Primary reasons:**")
+        st.markdown(t("analyze.primary_reasons", lang))
         for r in result.verdict.primary_reasons:
             # st.markdown auto-escapes by default; reasons are rendered as
             # plain text rather than HTML.
@@ -249,7 +284,7 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
         hist = yf.Ticker(ticker).history(period="3mo", interval="1d", auto_adjust=False)
         candle_df = candle_chart(hist, max_rows=60)
         if not candle_df.empty:
-            st.subheader("Recent price action (60d)")
+            st.subheader(t("analyze.candle_title", lang))
             fig = go.Figure(
                 data=[
                     go.Candlestick(
@@ -288,11 +323,11 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     # (which suffered a multi-user race condition where another user's
     # concurrent run could land between our write and our read).
     if result.envelopes:
-        st.subheader("Upstream envelopes")
+        st.subheader(t("analyze.envelopes_title", lang))
         st.dataframe(envelope_summary(result.envelopes), use_container_width=True, hide_index=True)
 
     if result.screener_candidates:
-        st.subheader(f"Screener candidates ({len(result.screener_candidates)})")
+        st.subheader(t("analyze.candidates_title", lang, n=len(result.screener_candidates)))
         st.dataframe(
             candidate_table(result.screener_candidates),
             use_container_width=True,
@@ -315,7 +350,7 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
             if not smile_df.empty:
                 import plotly.express as px
 
-                st.subheader("Options chain IV smile")
+                st.subheader(t("analyze.smile_title", lang))
                 fig = px.line(
                     smile_df,
                     x="strike",
@@ -333,7 +368,7 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     if result.ml_signal:
         _render_ml_gauge(result.ml_signal)
 
-    st.subheader("Memo (text)")
+    st.subheader(t("analyze.memo_title", lang))
     st.code(result.memo, language="text")
 
 
@@ -530,21 +565,87 @@ def _tab_ledger() -> None:
         st.plotly_chart(fig, use_container_width=True)
 
 
+def _tab_chat(sidebar_opts: dict[str, Any]) -> None:
+    """Free-form chat grounded in the latest analysis result."""
+
+    lang = sidebar_opts.get("lang", "en")
+    st.header(t("chat.header", lang))
+    st.caption(t("chat.caption", lang))
+
+    summary = st.session_state.get("last_analysis_summary") or {}
+    ticker = st.session_state.get("last_analysis_ticker")
+    ts = st.session_state.get("last_analysis_ts")
+    if summary and ticker:
+        st.info(t("chat.context_summary", lang, ticker=ticker, ts=ts or "—"))
+    else:
+        st.warning(t("chat.no_context", lang))
+
+    history: list[ChatMessage] = st.session_state.setdefault("chat_history", [])
+
+    col1, col2 = st.columns([1, 1])
+    with col2:
+        if st.button(t("chat.clear_btn", lang), use_container_width=True):
+            st.session_state["chat_history"] = []
+            history = st.session_state["chat_history"]
+
+    for m in history:
+        with st.chat_message(m.role):
+            st.markdown(m.content)
+
+    user_input = st.chat_input(t("chat.placeholder", lang))
+    if not user_input:
+        return
+
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    history.append(ChatMessage(role="user", content=user_input))
+
+    try:
+        with st.chat_message("assistant"):
+            with st.spinner(t("chat.spinner", lang)):
+                reply = chat_complete(
+                    history=history[:-1],
+                    user_message=user_input,
+                    context_bundle=summary,
+                    lang=lang,
+                    provider=sidebar_opts.get("provider"),
+                    disclaimer=DISCLAIMER,
+                )
+            st.markdown(reply)
+        history.append(ChatMessage(role="assistant", content=reply))
+        st.session_state["chat_history"] = history
+    except RuntimeError as e:
+        msg = str(e)
+        if "No LLM provider configured" in msg:
+            st.error(t("chat.no_llm", lang))
+        else:
+            st.error(t("chat.error", lang, err=msg))
+        history.pop()
+        st.session_state["chat_history"] = history
+
+
 def main() -> None:
     opts = _sidebar()
     _disclaimer_banner()
+    lang = opts["lang"]
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 Analyze ticker", "🔭 Screen market", "🧠 ML signal", "📒 Ledger"]
-    )
-    with tab1:
+    tabs = st.tabs([
+        t("tab.analyze", lang),
+        t("tab.screen", lang),
+        t("tab.ml", lang),
+        t("tab.ledger", lang),
+        t("tab.chat", lang),
+    ])
+    with tabs[0]:
         _tab_analyze(opts)
-    with tab2:
+    with tabs[1]:
         _tab_screen()
-    with tab3:
+    with tabs[2]:
         _tab_ml()
-    with tab4:
+    with tabs[3]:
         _tab_ledger()
+    with tabs[4]:
+        _tab_chat(opts)
 
 
 # Streamlit invokes the top-level module — pandas imports need to be local
