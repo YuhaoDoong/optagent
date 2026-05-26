@@ -1,6 +1,6 @@
 [project]
 name = "optagent"
-version = "0.3.0"
+version = "0.4.0-dev"
 description = "US equity options research agent — long-premium-only verdicts with audit-grade reproducibility."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -22,9 +22,15 @@ llm = [
     "anthropic>=0.40,<1",
     "tiktoken>=0.7,<1",
 ]
+ui = [
+    "streamlit>=1.30,<2",
+    "plotly>=5,<7",
+    "pandas>=2,<3",
+]
 
 [project.scripts]
 optagent = "optagent.cli:main"
+optagent-ui = "optagent.web.launcher:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
