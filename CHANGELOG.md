@@ -6,6 +6,80 @@ All notable changes to `optagent` are documented here.
 > structured research memos about US equity options. It does not place orders,
 > recommend trades, or claim suitability for any user.
 
+## [0.3.0] - 2026-05-26
+
+Major minor-release: market-wide screening framework + ML direction model
+with honest OOS validation + two additional rounds of Codex audit (R3 + R4 + R5).
+
+### Highlights since v0.1.0
+
+#### Strategies framework (cross-ticker screening)
+- New `src/optagent/strategies/` package with pluggable `BaseStrategy` ABC
+  and canonical `StrategySignal` schema (multi-timeframe diagnostic blocks
+  + IV/DTE context + execution friction + reward space + notes).
+- **Three strategies** ship:
+  - `oversold_rebound` (long-call observation; US-equity port of an
+    extreme-value repair model — RSI<35 + WR<-85 + below Bollinger +
+    EMA20 dev<-4.5% + lead-in down run + rebound bar)
+  - `momentum_breakout` (long-call; close above prior 20d high + volume
+    expansion + bullish EMA stack)
+  - `breakdown_continuation` (long-put; bearish mirror)
+- 80-ticker built-in universe covering sector ETFs (XLF/XLE/XLK/...),
+  thematic ETFs (SMH/SOXX/XBI/ARKK), regional banks (KRE/KBE), biotech
+  (IBB), and high-beta / recent-IPO names (COIN/HOOD/SOFI/PLTR/RIVN/ARM).
+- 11 sector mappings for news/policy-driven plays:
+  `optagent screen --strategy oversold_rebound --sector energy --limit 5`.
+- `ScreenResult` exposes `top_near_misses` and `stale_bars` so the
+  audit caller can see "what almost triggered" + "this run consumed
+  stale bars" (catches the US-market-holiday footgun).
+
+#### ML direction model (Alt-3 v0)
+- Per-ticker sklearn `GradientBoostingClassifier` on 12 OHLCV-derived
+  features; lazy-train + cache to `data/ml_cache/<TICKER>.pkl`.
+- **Walk-forward OOS validation** (`ml/walk_forward.py`) with strict
+  `gap >= horizon` to prevent label leakage.
+- `MLDirectionSignal` carries Wilson 95% CI lower/upper, class-baseline
+  accuracy, `n_oos_samples`, `oos_log_loss`, and a `credibility` label
+  that requires `n_oos_samples >= 200 AND wilson_ci_lower > 0.50 AND
+  > class_baseline + 0.02` before promoting from "low" to "medium".
+- LLM prompt now includes `<ml_signal id="ml-direction-v0">...</ml_signal>`
+  delimiter-wrapped block; SYSTEM_PROMPT Rule #6 declares ml_signal
+  cannot be the sole/dominant rationale for a non-SKIP verdict.
+
+#### News + IV history
+- `YahooNewsAdapter` (yfinance Ticker.news) with its own
+  `yfinance_news_research` provider profile and `<news_excerpt>`
+  delimiter-wrapped excerpts.
+- Per-ticker IV history persisted to `data/iv_history/<TICKER>.jsonl`
+  with strict `_safe_ticker` regex (closes path-traversal hole),
+  future-`as_of` rejection, negative-`hv20_annual` rejection.
+
+#### Three more rounds of Codex audit integration
+- **R3** caught and fixed: iv_history path-traversal hole, news
+  profile-id divergence, FRED non-endorsement verbatim wording.
+- **R4** caught and fixed: **unreachable `OversoldRebound` trigger**
+  (consec_down + stop_bleed were mutually exclusive — explained why
+  60 tickers returned 0 triggers), Williams %R term under-scaled,
+  walk-forward gap-vs-horizon enforcement, canonical disclaimer on
+  `StrategySignal.__post_init__`, robust per-ticker fetcher in
+  `screen_universe`, MLDirectionSignal cache version-check.
+- **R5** (final pre-release): see commit notes.
+
+#### Tests: 292 passing (was 30 at v0.1.0 R0, 179 at v0.1.0 release)
+
+### Iteration history
+
+| Round | Phase | Headline |
+|---|---|---|
+| 0–7 | v0.1 | Foundation through release (179 tests, v0.1.0 tag) |
+| 8 (R1) | v0.2 | news_factual adapter + IV history + multi-snapshot fixtures |
+| 9 (R2) | v0.2 | ML direction model (Alt-3 v0) + 3rd Codex audit |
+| 10 (R1) | v0.3 | Walk-forward ML + LLM ML wiring + strategies framework |
+| 11 (R2) | v0.3 | 2 new strategies + sector filter + Codex R4 integration |
+| 12 (R3) | v0.3 | Wilson CI + ml_signal delimiters + universe + diagnostics |
+
+---
+
 ## [0.1.0] - 2026-05-26
 
 First public release. v1 is bounded to long-premium strategies (`SKIP`,
