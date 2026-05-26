@@ -66,7 +66,12 @@ DEFAULT_RISK_FREE_RATE = 0.045
 
 
 class AnalyzeResult:
-    """Structured result returned from `analyze()`."""
+    """Structured result returned from `analyze()`.
+
+    Carries the envelopes / screener candidates / ml_signal in-process so
+    callers (UI, downstream tooling) never need to re-read the shared
+    ledger file and risk picking up another concurrent run's row.
+    """
 
     def __init__(
         self,
@@ -74,11 +79,17 @@ class AnalyzeResult:
         verdict: Verdict,
         memo: str,
         ledger_path: Path | None,
+        envelopes: list[Envelope] | None = None,
+        screener_candidates: list[OptionContract] | None = None,
+        ml_signal: dict | None = None,
     ) -> None:
         self.run_config = run_config
         self.verdict = verdict
         self.memo = memo
         self.ledger_path = ledger_path
+        self.envelopes = envelopes or []
+        self.screener_candidates = screener_candidates or []
+        self.ml_signal = ml_signal
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -315,7 +326,7 @@ def analyze(
         days_to_event=days_to_event,
         hv20_annual=hv20_annual,
         iv_rank_summary=iv_rank_summary,
-        ml_signal=(ml_signal.to_dict() if ml_signal is not None else None),
+        ml_signal=(_ml_signal_dict := ml_signal.to_dict() if ml_signal is not None else None),
         thresholds=ScreenerThresholds(
             min_dte=max(1, horizon_days // 2),
             max_dte=max(horizon_days * 3, 45),
@@ -383,6 +394,7 @@ def analyze(
         ledger_dir=ledger_dir,
         write_ledger=write_ledger,
         dte=dte,
+        ml_signal_dict=_ml_signal_dict,
     )
 
 
@@ -400,6 +412,7 @@ def _run_template_only_path(
     ledger_dir: Path | None,
     write_ledger: bool,
     dte: int,
+    ml_signal_dict: dict | None = None,
 ) -> AnalyzeResult:
     # template_only mode: no LLM → neutral bias → SKIP (safe default).
     verdict = _build_skip_verdict(
@@ -426,6 +439,7 @@ def _run_template_only_path(
         validator_decisions=[
             ValidatorDecision(check_id="template_only_default", passed=True, detail="no-LLM mode"),
         ],
+        ml_signal_dict=ml_signal_dict,
     )
 
 
@@ -606,6 +620,7 @@ def _finalize(
     price_table_version: str | None = None,
     tokenizer_version: str | None = None,
     fallback_reason: str | None = None,
+    ml_signal_dict: dict | None = None,
 ) -> AnalyzeResult:
     """Persist the audit row and return the final result object."""
 
@@ -645,4 +660,7 @@ def _finalize(
         verdict=verdict,
         memo=memo,
         ledger_path=ledger_path,
+        envelopes=list(envelopes),
+        screener_candidates=(list(screener_output.candidates) if screener_output else []),
+        ml_signal=ml_signal_dict,
     )

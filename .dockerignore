@@ -1,0 +1,26 @@
+# Build context exclusions
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local state
+.venv/
+venv/
+data/
+.git/
+.gitignore
+.humanize*
+
+# Tests (not needed in the image)
+tests/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# CI artifacts
+*.log

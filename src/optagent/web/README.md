@@ -42,6 +42,38 @@ Per-ticker GradientBoosting direction model with:
 - Wilson 95% CI + class baseline + n_oos_samples annotations.
 - Feature snapshot table.
 
+### 📒 Ledger
+Browse the persistent audit-ledger JSONL (`data/ledger/YYYY-MM-DD.jsonl`).
+Picks the last N days, surfaces a verdict-distribution pie chart, and shows
+one row per run (ticker / action / skip_reason / envelope and candidate
+counts / run_id).
+
+## Docker
+
+A `Dockerfile`, `docker-compose.yml`, and `.dockerignore` ship at the repo
+root. The image runs the same fail-closed validator and bounded
+`VerdictAction` enum as the CLI; nothing in the container path can promote
+a SKIP into a LONG verdict.
+
+```bash
+# Build once
+docker build -t optagent:0.4.0-dev .
+
+# Run; ledger / ML cache / IV history persist into ./data
+docker run -it --rm -p 127.0.0.1:8501:8501 \
+    -e OPTAGENT_USER_AGENT="me/0.0.1 (me@example.com)" \
+    -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+    -v "$(pwd)/data:/home/app/data" \
+    optagent:0.4.0-dev
+
+# Or compose (reads optional .env beside docker-compose.yml)
+docker compose up --build
+```
+
+Image runs as a non-root `app` user, binds Streamlit to `127.0.0.1` on the
+host by default, and exposes a `HEALTHCHECK` against
+`/_stcore/health`. Multi-stage build keeps the runtime image lean.
+
 ## Going public later
 
 The UI is intentionally framework-light so the hosting path is open:

@@ -26,6 +26,8 @@ from .components import (
     candle_chart,
     envelope_summary,
     feature_radar,
+    iv_smile_frame,
+    ledger_index,
     ml_signal_gauge,
     strategy_signal_table,
     verdict_badge,
@@ -53,10 +55,25 @@ def _disclaimer_banner() -> None:
 
 
 def _verdict_card(verdict_dict: dict[str, Any]) -> None:
-    label = verdict_dict["label"]
-    color = verdict_dict["color"]
-    skip_reason = verdict_dict.get("skip_reason")
-    conv = verdict_dict.get("conviction")
+    """Render the verdict badge.
+
+    SECURITY: every field that flows into HTML below is either (a) a member
+    of a closed enum (action, label) whose values are hard-coded in the
+    project, or (b) a #RRGGBB colour string drawn from _DIRECTION_STYLE.
+    No user-supplied or upstream string reaches the unsafe_allow_html
+    sink — guards against the Codex web-UI audit's XSS concern.
+    """
+
+    import html as _html
+
+    label = _html.escape(str(verdict_dict["label"]))[:64]
+    color = str(verdict_dict["color"])
+    if not (
+        len(color) == 7
+        and color.startswith("#")
+        and all(c in "0123456789abcdefABCDEF" for c in color[1:])
+    ):
+        color = "#374151"  # fallback to neutral grey if upstream sends junk
     badge_html = (
         f"<div style='display:inline-block;padding:8px 16px;border-radius:6px;"
         f"background:{color};color:white;font-size:18px;font-weight:700;'>"
@@ -64,10 +81,14 @@ def _verdict_card(verdict_dict: dict[str, Any]) -> None:
     )
     st.markdown(badge_html, unsafe_allow_html=True)
     info_bits = []
+    conv = verdict_dict.get("conviction")
     if conv is not None:
         info_bits.append(f"Conviction: {conv:.2f}")
+    skip_reason = verdict_dict.get("skip_reason")
     if skip_reason:
-        info_bits.append(f"Reason: `{skip_reason}`")
+        # skip_reason comes from the SkipReason enum (closed set); still
+        # render via st.markdown's text path, not the HTML path.
+        st.markdown(f"Reason: `{skip_reason}`")
     if info_bits:
         st.markdown("  ".join(info_bits))
 
@@ -141,10 +162,9 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     if not st.button("Analyze", type="primary"):
         return
 
-    if sidebar_opts["user_agent"]:
-        os.environ["OPTAGENT_USER_AGENT"] = sidebar_opts["user_agent"]
-    if sidebar_opts["fred_key"]:
-        os.environ["FRED_API_KEY"] = sidebar_opts["fred_key"]
+    # Codex web-audit fix: DO NOT write sidebar secrets to os.environ.
+    # In a multi-user Streamlit deployment process-global env mutation leaks
+    # across sessions. Pass credentials directly to adapter constructors.
 
     # Lazy imports so the page renders before yfinance / anthropic import cost.
     from ..orchestrator import analyze
@@ -158,14 +178,14 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     if sidebar_opts["fred_key"]:
         try:
             from ..adapters import FREDAdapter
-            fred_adapter = FREDAdapter(registry)
+            fred_adapter = FREDAdapter(registry, api_key=sidebar_opts["fred_key"])
         except Exception as e:  # noqa: BLE001
             st.warning(f"FRED adapter unavailable: {e}")
     sec_adapter = None
     if sidebar_opts["user_agent"]:
         try:
             from ..adapters import SECEdgarAdapter
-            sec_adapter = SECEdgarAdapter(registry)
+            sec_adapter = SECEdgarAdapter(registry, user_agent=sidebar_opts["user_agent"])
         except Exception as e:  # noqa: BLE001
             st.warning(f"SEC EDGAR adapter unavailable: {e}")
     news_adapter = None
@@ -216,40 +236,102 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     if result.verdict.primary_reasons:
         st.markdown("**Primary reasons:**")
         for r in result.verdict.primary_reasons:
+            # st.markdown auto-escapes by default; reasons are rendered as
+            # plain text rather than HTML.
             st.markdown(f"- {r}")
 
-    st.subheader("Upstream envelopes")
-    env_df = envelope_summary(result.verdict.citations and []  # placeholder; we want all envelopes
-                              or [])  # We'll fall back to ledger
-    # We need the envelopes list — pull from the ledger row we just wrote.
-    if result.ledger_path:
-        import json
+    # 60-day candle chart with EMA20/EMA50 overlays. Best-effort: silently
+    # skip if yfinance history fetch fails.
+    try:
+        import yfinance as yf  # noqa: WPS433
+        import plotly.graph_objects as go
 
-        try:
-            with result.ledger_path.open("r", encoding="utf-8") as f:
-                last_line = f.readlines()[-1]
-            audit = json.loads(last_line)
-            from ..schemas import Envelope as _Env
-
-            envelopes = [_Env.model_validate(e) for e in audit.get("envelopes") or []]
-            env_df = envelope_summary(envelopes)
-            st.dataframe(env_df, use_container_width=True, hide_index=True)
-
-            screener_out = audit.get("screener_output") or []
-            if screener_out:
-                st.subheader(f"Screener candidates ({len(screener_out)})")
-                from ..schemas import OptionContract as _OC
-
-                contracts = [_OC.model_validate(c) for c in screener_out]
-                st.dataframe(
-                    candidate_table(contracts), use_container_width=True, hide_index=True
+        hist = yf.Ticker(ticker).history(period="3mo", interval="1d", auto_adjust=False)
+        candle_df = candle_chart(hist, max_rows=60)
+        if not candle_df.empty:
+            st.subheader("Recent price action (60d)")
+            fig = go.Figure(
+                data=[
+                    go.Candlestick(
+                        x=candle_df.index,
+                        open=candle_df["Open"],
+                        high=candle_df["High"],
+                        low=candle_df["Low"],
+                        close=candle_df["Close"],
+                        name=ticker,
+                        increasing_line_color="#16a34a",
+                        decreasing_line_color="#dc2626",
+                    )
+                ]
+            )
+            if "EMA20" in candle_df.columns:
+                fig.add_scatter(
+                    x=candle_df.index, y=candle_df["EMA20"],
+                    mode="lines", name="EMA20", line=dict(width=1.5, color="#0ea5e9"),
                 )
+                fig.add_scatter(
+                    x=candle_df.index, y=candle_df["EMA50"],
+                    mode="lines", name="EMA50", line=dict(width=1.5, color="#a78bfa"),
+                )
+            fig.update_layout(
+                height=380,
+                margin=dict(l=10, r=10, t=30, b=10),
+                xaxis_rangeslider_visible=False,
+                showlegend=True,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception:  # noqa: BLE001
+        pass
 
-            ml_signal = (audit.get("screener_input") or {}).get("ml_signal")
-            if ml_signal:
-                _render_ml_gauge(ml_signal)
-        except Exception as e:  # noqa: BLE001
-            st.info(f"Ledger row could not be displayed: {e}")
+    # Codex web-audit fix: read envelopes / candidates / ml_signal directly
+    # from the AnalyzeResult instead of re-opening the shared ledger file
+    # (which suffered a multi-user race condition where another user's
+    # concurrent run could land between our write and our read).
+    if result.envelopes:
+        st.subheader("Upstream envelopes")
+        st.dataframe(envelope_summary(result.envelopes), use_container_width=True, hide_index=True)
+
+    if result.screener_candidates:
+        st.subheader(f"Screener candidates ({len(result.screener_candidates)})")
+        st.dataframe(
+            candidate_table(result.screener_candidates),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # IV smile chart from the chain envelope rows.
+        chain_env = next(
+            (
+                e
+                for e in result.envelopes
+                if e.source == "yfinance"
+                and isinstance(e.value, dict)
+                and (e.value.get("rows") if e.value else None)
+            ),
+            None,
+        )
+        if chain_env:
+            smile_df = iv_smile_frame(chain_env.value["rows"])
+            if not smile_df.empty:
+                import plotly.express as px
+
+                st.subheader("Options chain IV smile")
+                fig = px.line(
+                    smile_df,
+                    x="strike",
+                    y="iv",
+                    color="right",
+                    markers=True,
+                    height=320,
+                )
+                fig.update_layout(
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    yaxis_tickformat=".0%",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+    if result.ml_signal:
+        _render_ml_gauge(result.ml_signal)
 
     st.subheader("Memo (text)")
     st.code(result.memo, language="text")
@@ -409,17 +491,60 @@ def _tab_ml() -> None:
 # Entry point
 
 
+def _tab_ledger() -> None:
+    st.header("📒 Audit ledger viewer")
+    st.caption(
+        "Browse recent runs persisted to `data/ledger/YYYY-MM-DD.jsonl`. Useful "
+        "for post-hoc inspection without re-running."
+    )
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        days_back = st.slider("Days back", min_value=1, max_value=30, value=7)
+    with col2:
+        ledger_dir = st.text_input(
+            "Ledger directory", value="data/ledger",
+            help="Override if you ran with --ledger-dir.",
+        )
+
+    from pathlib import Path as _P
+
+    df = ledger_index(_P(ledger_dir), days_back=int(days_back))
+    if df.empty:
+        st.info(
+            "No ledger rows found. Run `optagent analyze <ticker>` (CLI or this UI) "
+            "to populate the ledger."
+        )
+        return
+
+    st.markdown(f"**{len(df)}** recent runs found.")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # Verdict distribution pie chart.
+    import plotly.express as px
+
+    counts = df["action"].value_counts().rename_axis("action").reset_index(name="count")
+    if not counts.empty:
+        fig = px.pie(counts, names="action", values="count", height=320)
+        fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+        st.subheader("Verdict distribution")
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def main() -> None:
     opts = _sidebar()
     _disclaimer_banner()
 
-    tab1, tab2, tab3 = st.tabs(["📊 Analyze ticker", "🔭 Screen market", "🧠 ML signal"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📊 Analyze ticker", "🔭 Screen market", "🧠 ML signal", "📒 Ledger"]
+    )
     with tab1:
         _tab_analyze(opts)
     with tab2:
         _tab_screen()
     with tab3:
         _tab_ml()
+    with tab4:
+        _tab_ledger()
 
 
 # Streamlit invokes the top-level module — pandas imports need to be local

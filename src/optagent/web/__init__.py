@@ -17,7 +17,10 @@ from .components import (
     candle_chart,
     envelope_summary,
     feature_radar,
+    iv_smile_frame,
+    ledger_index,
     ml_signal_gauge,
+    strategy_signal_table,
     verdict_badge,
 )
 
@@ -27,6 +30,9 @@ __all__ = [
     "candle_chart",
     "envelope_summary",
     "feature_radar",
+    "iv_smile_frame",
+    "ledger_index",
     "ml_signal_gauge",
+    "strategy_signal_table",
     "verdict_badge",
 ]

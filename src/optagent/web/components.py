@@ -183,6 +183,92 @@ def candle_chart(ohlcv: pd.DataFrame, *, max_rows: int = 60) -> pd.DataFrame:
     return tail
 
 
+def iv_smile_frame(rows: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
+    """Flatten chain rows into a (strike, right, iv) frame for the IV-smile chart.
+
+    Filters rows whose iv is finite + within [0.01, 5.0] (the same sanity
+    range the screener applies). Sorts by strike per right so plotly draws
+    smooth curves.
+    """
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        try:
+            iv = float(r.get("iv", 0.0) or 0.0)
+            strike = float(r.get("strike", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if not (0.01 < iv < 5.0) or strike <= 0:
+            continue
+        right = r.get("right")
+        if right not in ("call", "put"):
+            continue
+        out.append({"strike": strike, "iv": iv, "right": right})
+    df = pd.DataFrame(out)
+    if df.empty:
+        return df
+    return df.sort_values(["right", "strike"]).reset_index(drop=True)
+
+
+def ledger_index(ledger_dir: Any, days_back: int = 7) -> pd.DataFrame:
+    """Summarise recent JSONL ledger rows for the ledger viewer.
+
+    Returns a DataFrame with one row per run: run_id, ticker, run_mode,
+    verdict_action, skip_reason, started_at, finished_at, n_envelopes,
+    n_screener_candidates. Pure stdlib + pandas — no Streamlit dep.
+
+    `ledger_dir` is anything accepted by pathlib.Path.
+    """
+
+    import json
+    from datetime import date as _date, datetime as _dt, timedelta, timezone as _tz
+    from pathlib import Path
+
+    base = Path(ledger_dir)
+    if not base.exists():
+        return pd.DataFrame()
+
+    today = _dt.now(_tz.utc).date()
+    cutoff = today - timedelta(days=max(days_back, 1) - 1)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(base.glob("*.jsonl")):
+        try:
+            file_date = _date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if file_date < cutoff or file_date > today:
+            continue
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                verdict = rec.get("final_verdict") or {}
+                rows.append(
+                    {
+                        "started_at": rec.get("started_at"),
+                        "ticker": rec.get("ticker"),
+                        "run_mode": rec.get("run_mode"),
+                        "action": verdict.get("action"),
+                        "skip_reason": verdict.get("skip_reason"),
+                        "n_envelopes": len(rec.get("envelopes") or []),
+                        "n_candidates": len(rec.get("screener_output") or []),
+                        "run_id": rec.get("run_id"),
+                        "ledger_file": path.name,
+                    }
+                )
+        except OSError:
+            continue
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("started_at", ascending=False).reset_index(drop=True)
+    return df
+
+
 def strategy_signal_table(signals: list[Any]) -> pd.DataFrame:
     """Flatten a list of StrategySignal into a tidy table for the screen page."""
 

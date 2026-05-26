@@ -1,0 +1,31 @@
+# optagent — local Streamlit UI via Docker Compose
+#
+# Quickstart:
+#   docker compose up --build
+# Then visit http://localhost:8501.
+#
+# Set secrets in a `.env` file alongside this file (gitignored). Example:
+#   OPTAGENT_USER_AGENT=me/0.0.1 (me@example.com)
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   FRED_API_KEY=...
+#
+# > RESEARCH ONLY — NOT FINANCIAL ADVICE.
+
+services:
+  optagent-ui:
+    build: .
+    image: optagent:0.4.0-dev
+    container_name: optagent-ui
+    ports:
+      - "127.0.0.1:8501:8501"   # bind to loopback only by default
+    environment:
+      - OPTAGENT_USER_AGENT=${OPTAGENT_USER_AGENT:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - FRED_API_KEY=${FRED_API_KEY:-}
+    volumes:
+      # Persist the audit ledger + ML cache + IV history across container
+      # restarts so the cache hits and Wilson-CI history accumulate.
+      - ./data:/home/app/data
+    restart: unless-stopped
