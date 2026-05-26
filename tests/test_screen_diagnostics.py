@@ -10,7 +10,7 @@ import pytest
 
 from optagent.strategies import OversoldRebound, SignalDirection
 from optagent.strategies.screen import (
-    STALENESS_WARN_DAYS,
+    STALENESS_WARN_TRADING_DAYS,
     screen_universe,
     render_screen_report,
 )
@@ -85,9 +85,9 @@ def test_screen_surfaces_stale_bar_warnings():
         fetcher=fetcher,
         top_n=5,
     )
-    assert len(result.stale_bars) == 2  # both tickers stale by ~6 days
+    assert len(result.stale_bars) == 2
     for ticker, iso_date, days in result.stale_bars:
-        assert days >= STALENESS_WARN_DAYS
+        assert days >= STALENESS_WARN_TRADING_DAYS
         assert ticker in {"AAPL", "MSFT"}
 
 

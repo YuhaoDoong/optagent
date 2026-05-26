@@ -21,10 +21,32 @@ import pandas as pd
 from .base import BaseStrategy, SignalDirection, StrategySignal
 
 
-STALENESS_WARN_DAYS = 3
-"""Per Codex R4: surface a warning when the latest OHLCV bar lags the
-current trading day by more than this many calendar days. Catches the
-common "ran on a US market holiday" footgun."""
+STALENESS_WARN_TRADING_DAYS = 2
+"""Per Codex R5: surface a warning when the latest OHLCV bar lags the
+current trading day by more than this many TRADING days. Calendar-day
+logic false-positives on long weekends (Codex R5 case: Memorial Day
+Mon 2026-05-25 left Tuesday with a 4-calendar-day-old Friday bar).
+Using a Monday-Friday weekday count drops weekend skews."""
+
+
+def _trading_days_between(start_date, end_date) -> int:
+    """Count weekdays (Mon-Fri) strictly between start_date and end_date.
+
+    Approximation — does NOT subtract US market holidays — but already
+    handles the long-weekend false-positive that motivated the change.
+    """
+
+    if end_date <= start_date:
+        return 0
+    from datetime import timedelta
+
+    count = 0
+    cur = start_date + timedelta(days=1)
+    while cur <= end_date:
+        if cur.weekday() < 5:
+            count += 1
+        cur += timedelta(days=1)
+    return count
 
 
 @dataclass(frozen=True)
@@ -144,9 +166,11 @@ def screen_universe(
                 if last_bar_dt.tzinfo is None
                 else last_bar_dt.astimezone(timezone.utc)
             )
-            staleness = (now.date() - last_bar_utc.date()).days
-            if staleness >= STALENESS_WARN_DAYS:
-                stale_bars.append((ticker, last_bar_utc.date().isoformat(), staleness))
+            staleness_trading = _trading_days_between(last_bar_utc.date(), now.date())
+            if staleness_trading >= STALENESS_WARN_TRADING_DAYS:
+                stale_bars.append(
+                    (ticker, last_bar_utc.date().isoformat(), staleness_trading)
+                )
 
         try:
             signal = strategy.evaluate(

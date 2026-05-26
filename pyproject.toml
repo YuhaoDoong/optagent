@@ -1,6 +1,6 @@
 [project]
 name = "optagent"
-version = "0.2.0-dev"
+version = "0.3.0"
 description = "US equity options research agent — long-premium-only verdicts with audit-grade reproducibility."
 requires-python = ">=3.11"
 readme = "README.md"

@@ -32,6 +32,11 @@ from .features import FEATURE_NAMES, build_features, build_target
 MIN_TRAIN_FOR_FOLD = 200
 DEFAULT_K_FOLDS = 5
 DEFAULT_GAP = 5  # match the model's 5-day horizon
+DEFAULT_VAL_WINDOW = 40
+# Validation window bumped from 20 -> 40 in v0.3.0 R3 followup so that
+# n_oos_samples reaches ~200 (5 folds × 40 rows). Codex R5 flagged the
+# previous 20-row window made the `n_oos_samples >= 200` credibility
+# threshold structurally unreachable.
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,7 @@ def walk_forward_eval(
     k_folds: int = DEFAULT_K_FOLDS,
     gap: int = DEFAULT_GAP,
     horizon: int = 5,
+    val_window: int = DEFAULT_VAL_WINDOW,
 ) -> WalkForwardResult | None:
     """Run a K-fold expanding-window evaluation.
 
@@ -131,11 +137,11 @@ def walk_forward_eval(
     target = build_target(ohlcv["Close"].astype(float), horizon=horizon)
     df = pd.concat([features, target.rename("y")], axis=1).dropna()
     n = len(df)
-    if n < MIN_TRAIN_FOR_FOLD + DEFAULT_GAP + 20:
+    if n < MIN_TRAIN_FOR_FOLD + DEFAULT_GAP + val_window:
         return None
 
-    # Place fold split points uniformly between MIN_TRAIN_FOR_FOLD and n - gap - 20.
-    last_train_end = n - gap - 20
+    # Place fold split points uniformly between MIN_TRAIN_FOR_FOLD and n - gap - val_window.
+    last_train_end = n - gap - val_window
     if last_train_end <= MIN_TRAIN_FOR_FOLD:
         return None
     split_points = np.linspace(MIN_TRAIN_FOR_FOLD, last_train_end, num=k_folds, dtype=int)
@@ -152,7 +158,7 @@ def walk_forward_eval(
     for split in split_points:
         train_end = int(split)
         val_start = train_end + gap
-        val_end = min(val_start + 20, n)
+        val_end = min(val_start + val_window, n)
         if val_start >= val_end:
             continue
         if y[:train_end].sum() in (0, train_end):
@@ -177,7 +183,7 @@ def walk_forward_eval(
     lo, hi = _wilson_ci(pooled_acc, direction_total)
     # Majority-class baseline across all OOS samples — the accuracy a naive
     # "always predict the dominant class" model would achieve.
-    n_pos = int(y[: split_points[-1] + 20].sum()) if len(y) else 0
+    n_pos = int(y[: split_points[-1] + val_window].sum()) if len(y) else 0
     # Better: compute on all validation labels actually seen.
     # Re-derive baseline accuracy honestly by counting class frequencies in
     # the validation windows used above.
@@ -185,7 +191,7 @@ def walk_forward_eval(
     for split in split_points:
         train_end = int(split)
         val_start = train_end + gap
-        val_end = min(val_start + 20, n)
+        val_end = min(val_start + val_window, n)
         if val_start >= val_end:
             continue
         val_y_collected.extend(y[val_start:val_end].tolist())

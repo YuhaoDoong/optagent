@@ -105,3 +105,65 @@ def test_prompt_without_ml_signal_omits_block():
         envelopes=[_envelope()],
     )
     assert "<ml_signal" not in prompt
+
+
+def test_ml_signal_id_citation_is_caught_by_validator():
+    """Codex R5: explicit regression test for the LLM trying to cite the
+    `ml-direction-v0` signal id as if it were a real tool_call_id. The
+    validator's check (c) must catch this and downgrade to SKIP.
+    """
+
+    from optagent.profiles import ensure_default_profiles
+    from optagent.registry import ProviderRegistry
+    from optagent.render import render_template
+    from optagent.schemas import (
+        Citation,
+        OptionContract,
+        OptionRight,
+        RunConfig,
+        SkipReason,
+        Verdict,
+        VerdictAction,
+    )
+    from optagent.validator import validate
+
+    registry = ProviderRegistry()
+    ensure_default_profiles(registry)
+    registry.bind(RunConfig(ticker="AAPL"))
+
+    real_env = _envelope()
+    contract = _contract()
+    v = Verdict(
+        disclaimer="RESEARCH ONLY — NOT FINANCIAL ADVICE.",
+        action=VerdictAction.long_call,
+        contract=contract,
+        conviction=0.5,
+        primary_reasons=["ml signal said so"],
+        # The LLM tried to cite the ml_signal id as if it were a tcid.
+        citations=[
+            Citation(
+                tool_call_id="ml-direction-v0",
+                provider_profile_id="yfinance_research",
+            ),
+        ],
+    )
+    ttl_table = {
+        "price": {"rth": 10, "after_hours": 300, "critical": True},
+        "options_chain": {
+            "rth_low_vol": 30,
+            "rth_high_vol_or_near_expiry": 15,
+            "after_hours": 300,
+            "critical": True,
+        },
+    }
+    outcome = validate(
+        verdict=v,
+        candidates=[contract],
+        envelopes=[real_env],
+        llm_tool_input={"tool_call_ids_used": ["ml-direction-v0"]},
+        registry=registry,
+        ttl_table=ttl_table,
+        rendered_output=render_template(v, [real_env]),
+    )
+    assert outcome.skip_reason is SkipReason.phantom_citation
+    assert outcome.final_verdict.action is VerdictAction.skip

@@ -16,6 +16,10 @@ from __future__ import annotations
 SECTOR_TICKERS: dict[str, tuple[str, ...]] = {
     "broad_etf": ("SPY", "QQQ", "IWM", "DIA", "VTI"),
     "tech_mega": ("AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO", "ADBE", "CRM", "ORCL"),
+    # TSM is a foreign issuer ADR — not in BUILTIN_US_LARGE_CAP. Listed here
+    # for completeness so callers passing a custom universe that includes
+    # TSM still get the right sector mapping, but it'll be a no-op against
+    # the built-in default universe.
     "tech_chips": ("NVDA", "AMD", "INTC", "AVGO", "QCOM", "TSM"),
     "communication": ("NFLX", "DIS", "CMCSA", "T", "VZ"),
     "financial": ("JPM", "BAC", "WFC", "GS", "MS", "V", "MA"),

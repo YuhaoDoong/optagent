@@ -116,7 +116,7 @@ repair observation model); the framework is pluggable so adding new
 strategies is a single file under `src/optagent/strategies/`.
 
 ```bash
-# default: 60-ticker US large-cap universe, top 5 candidates
+# default: 85-ticker US large-cap universe, top 5 candidates
 optagent screen --strategy oversold_rebound --limit 5
 
 # custom universe from file
