@@ -23,18 +23,31 @@ from typing import Any, Callable, Iterable
 # top-of-book by avg options volume to give the screener a sensible default
 # starting set; users can override via `load_universe(...)`.
 BUILTIN_US_LARGE_CAP: tuple[str, ...] = (
-    "SPY", "QQQ", "IWM", "DIA", "VTI",          # broad ETFs
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN",
-    "META", "TSLA", "AVGO", "AMD", "NFLX",
+    # Broad ETFs
+    "SPY", "QQQ", "IWM", "DIA", "VTI",
+    # Sector / thematic ETFs (added v0.3.0 per Codex R4 #2 universe coverage)
+    "XLF", "XLE", "XLK", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC",
+    "SMH", "SOXX", "XBI", "ARKK", "XRT", "KRE", "KBE", "IBB",
+    # Tech mega-cap
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "NFLX",
     "ADBE", "CRM", "ORCL", "INTC", "QCOM",
+    # Financials
     "JPM", "BAC", "WFC", "GS", "MS", "V", "MA",
+    # Healthcare
     "JNJ", "PFE", "MRK", "UNH", "ABBV", "LLY",
+    # Energy
     "XOM", "CVX", "COP", "SLB",
+    # Consumer
     "HD", "WMT", "COST", "TGT", "LOW",
+    # Industrial
     "BA", "CAT", "DE", "GE", "HON",
+    # Comms / consumer-discretionary
     "DIS", "NKE", "MCD", "SBUX", "KO", "PEP",
     "T", "VZ", "CMCSA",
-    "GLD", "SLV", "USO", "UNG",                 # commodities ETFs as macro proxies
+    # Commodity ETFs (macro proxies)
+    "GLD", "SLV", "USO", "UNG",
+    # High-beta / recent-IPO style (Codex R4 universe coverage)
+    "COIN", "HOOD", "SOFI", "PLTR", "RIVN", "ARM",
 )
 
 

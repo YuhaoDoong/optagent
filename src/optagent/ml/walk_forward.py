@@ -43,17 +43,39 @@ class WalkForwardResult:
     direction_hit_rate: float
     train_rows_per_fold: list[int]
     val_rows_per_fold: list[int]
+    n_oos_samples: int
+    wilson_ci_lower: float  # 95% Wilson CI lower bound on pooled accuracy
+    wilson_ci_upper: float
+    class_baseline_accuracy: float  # majority-class predictor's accuracy
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "n_folds": self.n_folds,
+            "n_oos_samples": self.n_oos_samples,
             "oos_accuracy_mean": round(self.oos_accuracy_mean, 4),
             "oos_accuracy_std": round(self.oos_accuracy_std, 4),
             "oos_log_loss_mean": round(self.oos_log_loss_mean, 4),
             "direction_hit_rate": round(self.direction_hit_rate, 4),
+            "wilson_ci_lower": round(self.wilson_ci_lower, 4),
+            "wilson_ci_upper": round(self.wilson_ci_upper, 4),
+            "class_baseline_accuracy": round(self.class_baseline_accuracy, 4),
             "train_rows_per_fold": self.train_rows_per_fold,
             "val_rows_per_fold": self.val_rows_per_fold,
         }
+
+
+def _wilson_ci(p_hat: float, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score interval — robust for binomial proportions even at small n.
+
+    Returns (lower, upper) clamped to [0, 1]. n=0 returns (0, 1) (no info).
+    """
+
+    if n <= 0:
+        return (0.0, 1.0)
+    denom = 1.0 + z * z / n
+    center = (p_hat + z * z / (2.0 * n)) / denom
+    margin = z * math.sqrt(p_hat * (1.0 - p_hat) / n + z * z / (4.0 * n * n)) / denom
+    return (max(0.0, center - margin), min(1.0, center + margin))
 
 
 def _fit_predict(X_train, y_train, X_val) -> tuple[np.ndarray, np.ndarray]:
@@ -149,14 +171,40 @@ def walk_forward_eval(
 
     if not accuracies:
         return None
+    pooled_acc = (
+        float(direction_correct / direction_total) if direction_total else 0.0
+    )
+    lo, hi = _wilson_ci(pooled_acc, direction_total)
+    # Majority-class baseline across all OOS samples — the accuracy a naive
+    # "always predict the dominant class" model would achieve.
+    n_pos = int(y[: split_points[-1] + 20].sum()) if len(y) else 0
+    # Better: compute on all validation labels actually seen.
+    # Re-derive baseline accuracy honestly by counting class frequencies in
+    # the validation windows used above.
+    val_y_collected: list[int] = []
+    for split in split_points:
+        train_end = int(split)
+        val_start = train_end + gap
+        val_end = min(val_start + 20, n)
+        if val_start >= val_end:
+            continue
+        val_y_collected.extend(y[val_start:val_end].tolist())
+    if val_y_collected:
+        n_ones = sum(val_y_collected)
+        n_total = len(val_y_collected)
+        class_baseline = max(n_ones / n_total, 1.0 - n_ones / n_total)
+    else:
+        class_baseline = 0.5
     return WalkForwardResult(
         n_folds=len(accuracies),
         oos_accuracy_mean=float(np.mean(accuracies)),
         oos_accuracy_std=float(np.std(accuracies, ddof=0)),
         oos_log_loss_mean=float(np.mean(losses)),
-        direction_hit_rate=(
-            float(direction_correct / direction_total) if direction_total else math.nan
-        ),
+        direction_hit_rate=pooled_acc,
         train_rows_per_fold=train_rows,
         val_rows_per_fold=val_rows,
+        n_oos_samples=direction_total,
+        wilson_ci_lower=lo,
+        wilson_ci_upper=hi,
+        class_baseline_accuracy=float(class_baseline),
     )

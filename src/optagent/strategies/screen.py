@@ -12,13 +12,19 @@ LLM hooks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import pandas as pd
 
 from .base import BaseStrategy, SignalDirection, StrategySignal
+
+
+STALENESS_WARN_DAYS = 3
+"""Per Codex R4: surface a warning when the latest OHLCV bar lags the
+current trading day by more than this many calendar days. Catches the
+common "ran on a US market holiday" footgun."""
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,13 @@ class ScreenResult:
     skipped: list[tuple[str, str]]  # (ticker, reason)
     started_at: datetime
     finished_at: datetime
+    # Near-miss diagnostics — strategies that returned direction=skip but
+    # scored above zero. Preserved per Codex R4 finding so the user can
+    # inspect "almost triggers" without re-running.
+    top_near_misses: list[StrategySignal] = field(default_factory=list)
+    # Per-ticker stale-bar flags. Each entry is
+    # (ticker, last_bar_iso_date, staleness_days).
+    stale_bars: list[tuple[str, str, int]] = field(default_factory=list)
 
 
 def _default_fetcher(yf_module: Any | None) -> Callable[[str], tuple[pd.DataFrame | None, dict | None]]:
@@ -103,13 +116,12 @@ def screen_universe(
         fetcher = _default_fetcher(yf_module)
 
     triggered: list[StrategySignal] = []
+    near_misses: list[StrategySignal] = []
     skipped: list[tuple[str, str]] = []
+    stale_bars: list[tuple[str, str, int]] = []
     n_evaluated = 0
 
     for ticker in universe:
-        # Wrap the fetcher itself so one upstream error doesn't kill the
-        # whole screen (Codex R4 finding — fetcher exceptions previously
-        # escaped uncaught).
         try:
             ohlcv, chain = fetcher(ticker)
         except Exception as e:  # noqa: BLE001 - per-ticker robustness
@@ -119,6 +131,23 @@ def screen_universe(
             skipped.append((ticker, "no_ohlcv"))
             continue
         n_evaluated += 1
+
+        # Stale-bar diagnostic per Codex R4: a screen run on a US market
+        # holiday silently consumes the prior trading day's bar. We don't
+        # block, but we surface the staleness so the audit caller can warn.
+        last_bar_dt = ohlcv.index[-1]
+        if hasattr(last_bar_dt, "to_pydatetime"):
+            last_bar_dt = last_bar_dt.to_pydatetime()
+        if isinstance(last_bar_dt, datetime):
+            last_bar_utc = (
+                last_bar_dt.replace(tzinfo=timezone.utc)
+                if last_bar_dt.tzinfo is None
+                else last_bar_dt.astimezone(timezone.utc)
+            )
+            staleness = (now.date() - last_bar_utc.date()).days
+            if staleness >= STALENESS_WARN_DAYS:
+                stale_bars.append((ticker, last_bar_utc.date().isoformat(), staleness))
+
         try:
             signal = strategy.evaluate(
                 ticker,
@@ -134,21 +163,25 @@ def screen_universe(
             skipped.append((ticker, "strategy_returned_none"))
             continue
         if signal.direction is SignalDirection.skip:
-            # Still preserve the signal for audit but don't include in top-N
+            # Preserve as a near-miss for diagnostics if it scored anything.
+            if signal.score > 0:
+                near_misses.append(signal)
             continue
         triggered.append(signal)
 
     triggered.sort(key=lambda s: s.score, reverse=True)
-    top = triggered[:top_n]
+    near_misses.sort(key=lambda s: s.score, reverse=True)
     return ScreenResult(
         strategy_id=strategy.id,
         universe_size=len(universe),
         n_evaluated=n_evaluated,
         n_triggered=len(triggered),
-        top_signals=top,
+        top_signals=triggered[:top_n],
         skipped=skipped,
         started_at=started_at,
         finished_at=datetime.now(timezone.utc),
+        top_near_misses=near_misses[:top_n],
+        stale_bars=stale_bars,
     )
 
 
@@ -169,9 +202,23 @@ def render_screen_report(result: ScreenResult, disclaimer: str) -> str:
         f"Window:        {result.started_at.isoformat()}  ->  {result.finished_at.isoformat()}"
     )
     lines.append("")
+    if result.stale_bars:
+        lines.append("")
+        lines.append(f"Stale-bar warnings ({len(result.stale_bars)}):")
+        for ticker, iso_date, days in result.stale_bars[:10]:
+            lines.append(f"  - {ticker}: last bar {iso_date} ({days}d behind today)")
+        if len(result.stale_bars) > 10:
+            lines.append(f"  - ... and {len(result.stale_bars) - 10} more")
     if not result.top_signals:
+        lines.append("")
         lines.append("Top candidates: (none triggered)")
+        if result.top_near_misses:
+            lines.append("")
+            lines.append("Top near-misses (direction=skip but partial trigger):")
+            for i, sig in enumerate(result.top_near_misses[:5], start=1):
+                lines.append(f"  {i}. {sig.ticker}  score={sig.score:.3f}")
         return "\n".join(lines) + "\n"
+    lines.append("")
     lines.append("Top candidates:")
     for i, sig in enumerate(result.top_signals, start=1):
         lines.append(

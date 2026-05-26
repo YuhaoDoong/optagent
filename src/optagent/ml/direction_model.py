@@ -74,6 +74,10 @@ class MLDirectionSignal:
     oos_accuracy: float | None = None
     oos_log_loss: float | None = None
     n_oos_folds: int | None = None
+    n_oos_samples: int | None = None
+    wilson_ci_lower: float | None = None
+    wilson_ci_upper: float | None = None
+    class_baseline_accuracy: float | None = None
     credibility: str = "low"
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,6 +91,18 @@ class MLDirectionSignal:
             "oos_accuracy": (round(self.oos_accuracy, 4) if self.oos_accuracy is not None else None),
             "oos_log_loss": (round(self.oos_log_loss, 4) if self.oos_log_loss is not None else None),
             "n_oos_folds": self.n_oos_folds,
+            "n_oos_samples": self.n_oos_samples,
+            "wilson_ci_lower": (
+                round(self.wilson_ci_lower, 4) if self.wilson_ci_lower is not None else None
+            ),
+            "wilson_ci_upper": (
+                round(self.wilson_ci_upper, 4) if self.wilson_ci_upper is not None else None
+            ),
+            "class_baseline_accuracy": (
+                round(self.class_baseline_accuracy, 4)
+                if self.class_baseline_accuracy is not None
+                else None
+            ),
             "credibility": self.credibility,
             "model_version": self.model_version,
             "feature_snapshot": {k: round(v, 6) for k, v in self.feature_snapshot.items()},
@@ -244,6 +260,12 @@ class MLDirectionAdapter:
                 "oos_accuracy": (wf.oos_accuracy_mean if wf is not None else None),
                 "oos_log_loss": (wf.oos_log_loss_mean if wf is not None else None),
                 "n_oos_folds": (wf.n_folds if wf is not None else None),
+                "n_oos_samples": (wf.n_oos_samples if wf is not None else None),
+                "wilson_ci_lower": (wf.wilson_ci_lower if wf is not None else None),
+                "wilson_ci_upper": (wf.wilson_ci_upper if wf is not None else None),
+                "class_baseline_accuracy": (
+                    wf.class_baseline_accuracy if wf is not None else None
+                ),
             }
             self._save(self._cache_path(ticker), blob)
 
@@ -252,14 +274,24 @@ class MLDirectionAdapter:
             k: float(latest_row[k]) for k in FEATURE_NAMES if math.isfinite(float(latest_row[k]))
         }
         oos_accuracy = blob.get("oos_accuracy")
-        # Credibility annotation — keeps the ledger / LLM from over-trusting
-        # the model. "high" requires >=3 OOS folds AND accuracy > 0.55.
-        if oos_accuracy is None:
-            credibility = "low"
-        elif oos_accuracy > 0.55 and (blob.get("n_oos_folds") or 0) >= 3:
-            credibility = "medium"  # still not strong evidence; just better than nothing
-        else:
-            credibility = "low"
+        ci_lower = blob.get("wilson_ci_lower")
+        baseline = blob.get("class_baseline_accuracy")
+        n_samples = blob.get("n_oos_samples") or 0
+        # Credibility annotation per Codex R4: require Wilson CI lower bound
+        # to clear BOTH chance (0.50) AND the class-baseline accuracy by a
+        # meaningful margin before promoting to "medium". Plus a hard
+        # sample-size floor (n_oos_samples >= 200) so noisy small-window
+        # estimates cannot fake credibility.
+        credibility = "low"
+        if (
+            oos_accuracy is not None
+            and ci_lower is not None
+            and baseline is not None
+            and n_samples >= 200
+            and ci_lower > 0.50
+            and ci_lower > baseline + 0.02
+        ):
+            credibility = "medium"
         return MLDirectionSignal(
             ticker=ticker,
             prob_up=prob_up,
@@ -272,6 +304,10 @@ class MLDirectionAdapter:
             oos_accuracy=oos_accuracy,
             oos_log_loss=blob.get("oos_log_loss"),
             n_oos_folds=blob.get("n_oos_folds"),
+            n_oos_samples=blob.get("n_oos_samples"),
+            wilson_ci_lower=blob.get("wilson_ci_lower"),
+            wilson_ci_upper=blob.get("wilson_ci_upper"),
+            class_baseline_accuracy=blob.get("class_baseline_accuracy"),
             credibility=credibility,
         )
 
