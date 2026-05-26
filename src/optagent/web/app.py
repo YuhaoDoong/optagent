@@ -20,8 +20,8 @@ from typing import Any
 
 import streamlit as st
 
-from .. import DISCLAIMER, __version__
-from .components import (
+from optagent import DISCLAIMER, __version__
+from optagent.web.components import (
     candidate_table,
     candle_chart,
     envelope_summary,
@@ -167,9 +167,9 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     # across sessions. Pass credentials directly to adapter constructors.
 
     # Lazy imports so the page renders before yfinance / anthropic import cost.
-    from ..orchestrator import analyze
-    from ..profiles import ensure_default_profiles
-    from ..registry import ProviderRegistry
+    from optagent.orchestrator import analyze
+    from optagent.profiles import ensure_default_profiles
+    from optagent.registry import ProviderRegistry
 
     registry = ProviderRegistry()
     ensure_default_profiles(registry)
@@ -177,33 +177,33 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     fred_adapter = None
     if sidebar_opts["fred_key"]:
         try:
-            from ..adapters import FREDAdapter
+            from optagent.adapters import FREDAdapter
             fred_adapter = FREDAdapter(registry, api_key=sidebar_opts["fred_key"])
         except Exception as e:  # noqa: BLE001
             st.warning(f"FRED adapter unavailable: {e}")
     sec_adapter = None
     if sidebar_opts["user_agent"]:
         try:
-            from ..adapters import SECEdgarAdapter
+            from optagent.adapters import SECEdgarAdapter
             sec_adapter = SECEdgarAdapter(registry, user_agent=sidebar_opts["user_agent"])
         except Exception as e:  # noqa: BLE001
             st.warning(f"SEC EDGAR adapter unavailable: {e}")
     news_adapter = None
     try:
-        from ..adapters import YahooNewsAdapter
+        from optagent.adapters import YahooNewsAdapter
         news_adapter = YahooNewsAdapter(registry)
     except Exception:  # noqa: BLE001
         pass
     ml_adapter = None
     if sidebar_opts["enable_ml"]:
-        from ..ml import MLDirectionAdapter
+        from optagent.ml import MLDirectionAdapter
         ml_adapter = MLDirectionAdapter()
 
     llm_client = model = price_table = ttl_table = None
     if sidebar_opts["enable_llm"]:
         try:
-            from ..config_loader import load_bundle
-            from ..llm import make_client_from_env
+            from optagent.config_loader import load_bundle
+            from optagent.llm import make_client_from_env
 
             bundle = load_bundle()
             price_table = bundle.price_table
@@ -388,7 +388,7 @@ def _tab_screen() -> None:
         "top candidates by score."
     )
 
-    from ..strategies import list_sectors, list_strategy_ids
+    from optagent.strategies import list_sectors, list_strategy_ids
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -404,7 +404,7 @@ def _tab_screen() -> None:
     if not st.button("Run screen", type="primary"):
         return
 
-    from ..strategies import (
+    from optagent.strategies import (
         builtin_us_large_cap,
         filter_to_sector,
         get_strategy,
@@ -476,7 +476,7 @@ def _tab_ml() -> None:
     if not st.button("Compute signal", type="primary", key="ml_run"):
         return
 
-    from ..ml import MLDirectionAdapter
+    from optagent.ml import MLDirectionAdapter
 
     with st.spinner(f"Training / loading model for {ticker}..."):
         adapter = MLDirectionAdapter()
