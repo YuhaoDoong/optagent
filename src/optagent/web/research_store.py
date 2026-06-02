@@ -113,14 +113,17 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 # FIRST when compacting a strategy's `conditions` so the screen explanation
 # never loses a mandatory check to an insertion-order slice.
 _DECISIVE_CONDITION_KEYS = (
+    # Pass/trigger booleans first (the mandatory checks), then supporting metrics.
     "broke_out", "broke_down", "vol_expansion",
-    "rsi_14", "rsi_in_band", "rsi_14_pass",
-    "williams_r_14", "williams_r_14_pass",
-    "ema20_dev", "ema20_dev_pass",
+    "rsi_14_pass", "rsi_in_band",
+    "williams_r_14_pass",
+    "ema20_dev_pass",
     "below_boll_lower",
-    "consec_down", "consec_down_pass",
-    "ema20_slope_pct_5d", "trend_healthy", "trend_bearish",
-    "ema20", "ema50",
+    "consec_down_pass",
+    "trend_healthy", "trend_bearish",
+    # Supporting metric values:
+    "rsi_14", "williams_r_14", "ema20_dev", "consec_down_days",
+    "ema20_slope_pct_5d", "ema20", "ema50",
 )
 
 
@@ -594,6 +597,10 @@ def build_context(
     stale_tag = " [stale]"
 
     lines: list[str] = []
+    # Verbose per-signal screen detail is deferred to the END so that the
+    # compact summary of EVERY section (screen picks, analysis, ML, ledger)
+    # survives — only this trailing detail is sacrificed when the char cap hits.
+    detail_lines: list[str] = []
     store = store or {}
 
     def section(title_en: str, title_zh: str) -> str:
@@ -629,24 +636,34 @@ def build_context(
                     f"score={escape_untrusted(p.get('combined_score'))} "
                     f"strategies=[{sup}]"
                 )
+        # Compact per-strategy summary (always kept).
         for sid, sres in (screen.get("strategies") or {}).items():
             if sres.get("error"):
                 lines.append(f"  [{escape_untrusted(sid)}] error: {escape_untrusted(sres.get('error'))}")
                 continue
-            lines.append(
-                f"  [{escape_untrusted(sid)}] triggered={escape_untrusted(sres.get('n_triggered'))}:"
+            stale_set = set(sres.get("stale_tickers") or [])
+            tickers = ",".join(
+                escape_untrusted(s.get("ticker")) + ("*" if s.get("ticker") in stale_set else "")
+                for s in (sres.get("signals") or [])[:8]
             )
+            lines.append(
+                f"  [{escape_untrusted(sid)}] triggered={escape_untrusted(sres.get('n_triggered'))} "
+                f"top=[{tickers}]"
+                + (f" (*=stale: {','.join(escape_untrusted(x) for x in list(stale_set)[:8])})" if stale_set else "")
+            )
+            # Verbose per-signal evidence -> deferred detail section.
             for s in (sres.get("signals") or [])[:6]:
                 notes = "; ".join(escape_untrusted(n) for n in (s.get("notes") or [])[:2])
-                cond = _curate_conditions(s.get("conditions"), 6)
+                cond = _curate_conditions(s.get("conditions"), 12)
                 cond_str = ", ".join(
                     f"{escape_untrusted(k)}={escape_untrusted(v)}"
                     for k, v in cond.items()
                 )
                 reward = _as_mapping(s.get("reward"))
                 tgt = reward.get("target_price")
-                lines.append(
-                    f"    - {escape_untrusted(s.get('ticker'))} "
+                st_mark = stale_tag if s.get("ticker") in stale_set else ""
+                detail_lines.append(
+                    f"  [{escape_untrusted(sid)}] {escape_untrusted(s.get('ticker'))}{st_mark} "
                     f"dir={escape_untrusted(s.get('direction'))} "
                     f"score={escape_untrusted(s.get('score'))}"
                     + (f" target={escape_untrusted(tgt)}" if tgt is not None else "")
@@ -673,6 +690,16 @@ def build_context(
                 f"skip_reason={escape_untrusted(v.get('skip_reason'))} "
                 f"conviction={escape_untrusted(conv)} computed_at={ca}{tag}"
             )
+            # The run inputs (horizon / max-loss budget) so chat can relate the
+            # verdict to the chosen horizon and loss budget.
+            inp = _as_mapping(snap.get("inputs"))
+            if inp:
+                hz = inp.get("horizon_days")
+                ml_budget = inp.get("max_loss_usd")
+                lines.append(
+                    f"      inputs: horizon_days={escape_untrusted(hz)} "
+                    f"max_loss_usd={escape_untrusted(ml_budget)}"
+                )
             # A bounded subset of the verdict rationale so chat can answer
             # "why this verdict".
             reasons = _compact_seq(v.get("primary_reasons"), 2)
@@ -752,6 +779,12 @@ def build_context(
             f"rows={escape_untrusted(ledger.get('n_rows'))} "
             f"computed_at={escape_untrusted(ledger.get('computed_at'))}{tag} verdicts: {counts}"
         )
+
+    # Verbose screen per-signal detail goes LAST so it is the only thing the
+    # char cap can drop — every section's compact summary above is preserved.
+    if detail_lines:
+        lines.append(section("## Screen detail (per-strategy signals)", "## 筛选明细(各策略信号)"))
+        lines.extend(detail_lines)
 
     # Bound the whole block while keeping the wrapper well-formed (raises if the
     # cap is too small to hold even an empty wrapped block).

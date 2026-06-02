@@ -443,6 +443,70 @@ def test_screen_snapshot_keeps_trigger_diagnostics():
     assert "target=210.0" in ctx
 
 
+def test_build_context_preserves_all_sections_under_truncation():
+    # A verbose multi-strategy screen must NOT crowd out the compact summaries
+    # of available analysis / ML / ledger sections.
+    store = rs.init_store()
+    big_sigs = [{"ticker": f"T{i}", "direction": "d", "score": 1.0,
+                 "notes": ["n" * 60], "daily": {"conditions": {"broke_out": True, "k": "v" * 60}}}
+                for i in range(10)]
+    store["screen"] = rs.screen_snapshot(
+        {f"s{j}": {"error": None, "n_triggered": 10, "signals": big_sigs} for j in range(6)},
+        [], "t",
+    )
+    store["analysis"]["AAPL"] = rs.analysis_snapshot(
+        "AAPL", {"action": "SKIP", "skip_reason": "x"}, [], "t", inputs={"horizon_days": 14})
+    store["ml"]["AAPL"] = rs.ml_snapshot("AAPL", {"prob_up": 0.5, "credibility": "low"}, "t")
+    ctx = rs.build_context(store, "en", max_chars=2000)
+    assert len(ctx) <= 2000
+    # Both the analysis and ML sections survive (their compact summaries precede
+    # the truncatable screen detail).
+    assert "## Single-stock analysis" in ctx and "AAPL" in ctx
+    assert "## ML direction signal" in ctx
+
+
+def test_build_context_marks_stale_screen_rows():
+    store = rs.init_store()
+    store["screen"] = rs.screen_snapshot(
+        {"s1": {"error": None, "n_triggered": 2, "stale_tickers": ["TSLA"],
+                "signals": [{"ticker": "AAPL", "score": 1.0}, {"ticker": "TSLA", "score": 1.0}]}},
+        [], "t",
+    )
+    ctx = rs.build_context(store, "en")
+    assert "TSLA*" in ctx or "stale: TSLA" in ctx  # the affected ticker is marked
+
+
+def test_build_context_keeps_all_oversold_required_checks():
+    cond = {
+        "rsi_14": 28, "rsi_14_pass": True,
+        "williams_r_14": -92, "williams_r_14_pass": True,
+        "below_boll_lower": True,
+        "ema20_dev": -0.07, "ema20_dev_pass": True,
+        "consec_down_days": 4, "consec_down_pass": True,
+    }
+    store = rs.init_store()
+    store["screen"] = rs.screen_snapshot(
+        {"oversold_rebound": {"error": None, "n_triggered": 1,
+                              "signals": [{"ticker": "AAPL", "direction": "long_call_observation",
+                                           "score": 1.0, "daily": {"conditions": cond}}]}},
+        [], "t",
+    )
+    ctx = rs.build_context(store, "en")
+    # The mandatory oversold pass-checks must all survive the chat-grounding cap.
+    assert "below_boll_lower=" in ctx
+    assert "consec_down_pass=" in ctx
+
+
+def test_build_context_includes_analysis_inputs():
+    store = rs.init_store()
+    store["analysis"]["AAPL"] = rs.analysis_snapshot(
+        "AAPL", {"action": "SKIP", "skip_reason": "x"}, [], "t",
+        inputs={"ticker": "AAPL", "horizon_days": 21, "max_loss_usd": 500.0})
+    ctx = rs.build_context(store, "en")
+    assert "horizon_days=21" in ctx
+    assert "max_loss_usd=500.0" in ctx
+
+
 def test_curate_conditions_keeps_decisive_keys_first():
     cond = {f"pad{i}": i for i in range(10)}  # filler keys inserted first
     cond.update({"broke_out": True, "vol_expansion": True, "ema20_dev": -0.05})
