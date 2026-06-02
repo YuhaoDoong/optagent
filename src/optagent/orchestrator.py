@@ -123,6 +123,88 @@ def _build_skip_verdict(reason: SkipReason, primary_reasons: list[str]) -> Verdi
     )
 
 
+# Rejection reasons that mean "the data provider gave us no usable quote",
+# as opposed to "we had real quotes but none cleared the quality bar". When
+# the empty screen is dominated by these, the honest skip_reason is
+# `stale_required_input` (a data problem), NOT `no_candidates_after_screen`
+# (which reads like the strategy found nothing actionable).
+_QUOTELESS_REJECTIONS = frozenset(
+    {
+        "zero_bid",
+        "invalid_quote",
+        "invalid_iv",
+        "invalid_greeks",
+        "crossed_book",
+        "locked_book",
+        "missing_field",
+        "invalid_spot",
+    }
+)
+
+
+def _diagnose_empty_screen(screener_output: ScreenerOutput) -> tuple[SkipReason, list[str]]:
+    """Explain WHY the screener produced zero candidates.
+
+    Distinguishes a data-provider problem (no live bid/ask, market closed,
+    Yahoo returned a quote-less chain) from a legitimate "quotes were fine but
+    nothing met the liquidity / delta bar". The user-facing message is the
+    single most-actionable thing we can say, so we lead with the dominant
+    cause and the concrete next step.
+    """
+
+    from collections import Counter
+
+    rejected = screener_output.rejected
+    summary = screener_output.inputs_summary or {}
+    n_rows = int(summary.get("n_rows_in", len(rejected)) or 0)
+
+    if n_rows == 0:
+        return (
+            SkipReason.stale_required_input,
+            [
+                "The data provider returned an EMPTY options chain (zero rows) for "
+                "the chosen expiry. This is a data availability problem, not a "
+                "strategy result. Re-run during US market hours (09:30–16:00 ET); "
+                "if it persists the provider (yfinance/Yahoo) is degraded."
+            ],
+        )
+
+    counts = Counter(reason for _occ, reason in rejected)
+    quoteless = sum(n for reason, n in counts.items() if reason in _QUOTELESS_REJECTIONS)
+    total = sum(counts.values()) or 1
+    dominant, dominant_n = counts.most_common(1)[0]
+
+    if quoteless / total >= 0.8:
+        pct = round(100 * quoteless / total)
+        exp = summary.get("expiration")
+        return (
+            SkipReason.stale_required_input,
+            [
+                f"The options chain came back WITHOUT live bid/ask quotes — "
+                f"{quoteless}/{total} rows ({pct}%) had no usable two-sided quote "
+                f"(dominant reason: {dominant}). This almost always means the data "
+                f"provider had no live market snapshot: the US market is closed, or "
+                f"yfinance/Yahoo returned only last-trade prices with zeroed "
+                f"bid/ask and open-interest"
+                + (f" (expiry {exp})." if exp else ".") ,
+                "This is a DATA problem, not a verdict against the stock. Re-run "
+                "during US regular trading hours (09:30–16:00 ET) to get real "
+                "quotes; the screener intentionally refuses to act on quote-less "
+                "rows rather than guess prices.",
+            ],
+        )
+
+    # Genuine: quotes were present, nothing met the bar.
+    bits = ", ".join(f"{reason}×{n}" for reason, n in counts.most_common(4))
+    return (
+        SkipReason.no_candidates_after_screen,
+        [
+            f"Quotes were available but no contract met the liquidity / DTE / "
+            f"delta bar ({total} rows screened out; breakdown: {bits}).",
+        ],
+    )
+
+
 def _build_template_long_verdict(
     contract: OptionContract,
     chain_env: Envelope,
@@ -335,10 +417,8 @@ def analyze(
     screener_output = screen(screener_inputs)
 
     if not screener_output.candidates:
-        verdict = _build_skip_verdict(
-            SkipReason.no_candidates_after_screen,
-            ["Screener produced zero candidates after liquidity + DTE filters."],
-        )
+        skip_reason, primary_reasons = _diagnose_empty_screen(screener_output)
+        verdict = _build_skip_verdict(skip_reason, primary_reasons)
         memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
         return _finalize(
             run_config,
@@ -352,7 +432,11 @@ def analyze(
             ledger_dir=ledger_dir,
             write_ledger=write_ledger,
             validator_decisions=[
-                ValidatorDecision(check_id="no_candidates", passed=False, detail="0 candidates"),
+                ValidatorDecision(
+                    check_id="no_candidates",
+                    passed=False,
+                    detail=f"0 candidates; skip_reason={skip_reason.value}",
+                ),
             ],
         )
 
