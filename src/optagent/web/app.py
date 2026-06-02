@@ -622,18 +622,22 @@ def _tab_screen(lang: str = "en") -> None:
                     t("screen.spinner", lang, strategy=", ".join(strategy_ids), n=len(universe))
                 ):
                     results = _run_multi_strategy(strategy_ids, universe)
-                # Synthesis sees the FULL triggered set; Top-N applies after.
-                synthesis = rs.synthesise_cross_strategy(results, top_n=int(limit))
-                st.session_state["screen_display_limit"] = int(limit)
-                # Persist so reruns (e.g. the Explain button) keep the data, and
-                # the chat panel can ground on it.
-                st.session_state["last_screen"] = {"results": results, "synthesis": synthesis}
-                _store()["screen"] = rs.screen_snapshot(
-                    results,
-                    synthesis,
-                    _now_iso(),
-                    inputs={"strategies": strategy_ids, "sector": sector, "limit": int(limit)},
-                )
+                screen_inputs = {"strategies": strategy_ids, "sector": sector, "limit": int(limit)}
+                if not rs.screen_has_evaluation(results):
+                    # Every strategy errored or evaluated 0 tickers (provider
+                    # outage) — record an unavailable screen, not a zero-trigger.
+                    _fail_screen(screen_inputs)
+                    st.warning(t("screen.no_data_evaluated", lang))
+                else:
+                    # Synthesis sees the FULL triggered set; Top-N applies after.
+                    synthesis = rs.synthesise_cross_strategy(results, top_n=int(limit))
+                    st.session_state["screen_display_limit"] = int(limit)
+                    # Persist so reruns (e.g. the Explain button) keep the data,
+                    # and the chat panel can ground on it.
+                    st.session_state["last_screen"] = {"results": results, "synthesis": synthesis}
+                    _store()["screen"] = rs.screen_snapshot(
+                        results, synthesis, _now_iso(), inputs=screen_inputs,
+                    )
 
     snap = st.session_state.get("last_screen")
     if not snap:

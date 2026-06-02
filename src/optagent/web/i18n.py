@@ -193,6 +193,10 @@ _TABLE: dict[str, dict[str, str]] = {
     "screen.explain_title": {"en": "AI explanation (research commentary)", "zh": "AI 解释(研究性评论)"},
     "screen.run_first": {"en": "Run a screen first, then ask the AI to explain it.", "zh": "请先运行筛选,再让 AI 解释。"},
     "screen.no_synthesis": {"en": "No tickers triggered across the selected strategies.", "zh": "所选策略均未触发任何股票。"},
+    "screen.no_data_evaluated": {
+        "en": "No market data could be evaluated (data provider unavailable or all strategies failed). This is a data problem, not a zero-trigger result — re-run during US market hours.",
+        "zh": "没有可评估的行情数据(数据源不可用或所有策略都失败了)。这是数据问题,不是'没有触发'——请在美股盘中重跑。",
+    },
     "screen.synthesis_filtered": {
         "en": "Strategies triggered tickers, but none qualified for the cross-strategy ranking (e.g. excluded for stale OHLCV bars). See the per-strategy tables below.",
         "zh": "策略触发了一些股票,但没有进入跨策略排名(例如因 OHLCV 数据过期被排除)。详见下方各策略表格。",

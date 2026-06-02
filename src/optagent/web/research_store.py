@@ -465,6 +465,20 @@ def ledger_summary_snapshot(
 # Cross-strategy synthesis (deterministic, LLM-free)
 
 
+def screen_has_evaluation(results_by_strategy: Mapping[str, Mapping[str, Any]]) -> bool:
+    """True iff at least one strategy ran without error AND evaluated >0 tickers.
+
+    A multi-strategy run where every strategy errored or evaluated nothing (a
+    data-provider outage) is NOT a valid zero-trigger screen — callers should
+    record it as unavailable rather than a completed scan.
+    """
+
+    for res in (results_by_strategy or {}).values():
+        if isinstance(res, Mapping) and not res.get("error") and _as_int(res.get("n_evaluated")) > 0:
+            return True
+    return False
+
+
 def run_strategies(strategy_ids: Sequence[str], run_one) -> dict[str, dict[str, Any]]:
     """Run `run_one(strategy_id)` per id with per-strategy error isolation.
 

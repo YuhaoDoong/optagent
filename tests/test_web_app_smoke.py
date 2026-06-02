@@ -107,6 +107,34 @@ def test_ledger_view_writes_snapshot():
     assert led is not None and "available" in led  # the view always records a snapshot
 
 
+def test_all_strategies_failed_records_unavailable_screen(monkeypatch):
+    # Provider outage: every strategy errors / evaluates nothing -> the screen
+    # must be recorded as UNAVAILABLE, not a zero-trigger completed screen.
+    class _Res:
+        top_signals = []
+        n_triggered = 0
+        n_evaluated = 0          # nothing evaluated
+        stale_bars = []
+        top_near_misses = []
+
+    def fake_screen(strategy, universe, *, fetcher=None, top_n):
+        raise RuntimeError("yahoo down")  # all strategies fail
+
+    monkeypatch.setattr("optagent.strategies.get_strategy", lambda sid: object())
+    monkeypatch.setattr("optagent.strategies.screen_universe", fake_screen)
+    monkeypatch.setattr("optagent.strategies.builtin_us_large_cap", lambda: ["AAPL", "MSFT"])
+
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["last_screen"] = {"results": {}, "synthesis": []}  # stale success
+    at.run()
+    run_btn = [b for b in at.button if b.label == "运行筛选"][0]
+    run_btn.click().run()
+    assert not at.exception, f"render raised: {at.exception}"
+    screen_snap = at.session_state["research_store"]["screen"]
+    assert screen_snap is not None and screen_snap["available"] is False
+    assert at.session_state["last_screen"] is None
+
+
 def test_empty_universe_failed_screen_overwrites_grounding(monkeypatch):
     # An empty sector-filtered universe must overwrite prior successful grounding.
     # _build_universe lazily imports filter_to_sector from the source module, so

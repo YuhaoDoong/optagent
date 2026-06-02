@@ -554,6 +554,18 @@ def test_build_context_includes_analysis_inputs():
     assert "max_loss_usd=500.0" in ctx
 
 
+def test_screen_has_evaluation():
+    assert rs.screen_has_evaluation({"s1": {"error": None, "n_evaluated": 5}}) is True
+    # All errored or zero-evaluated -> not a valid screen.
+    assert rs.screen_has_evaluation({"s1": {"error": "boom", "signals": []}}) is False
+    assert rs.screen_has_evaluation({"s1": {"error": None, "n_evaluated": 0}}) is False
+    assert rs.screen_has_evaluation({}) is False
+    # Mixed: one good strategy is enough.
+    assert rs.screen_has_evaluation(
+        {"bad": {"error": "x"}, "ok": {"error": None, "n_evaluated": 3}}
+    ) is True
+
+
 def test_curate_conditions_keeps_decisive_keys_first():
     cond = {f"pad{i}": i for i in range(10)}  # filler keys inserted first
     cond.update({"broke_out": True, "vol_expansion": True, "ema20_dev": -0.05})
