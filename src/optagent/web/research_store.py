@@ -252,25 +252,41 @@ def screen_snapshot(
         snap = _base_snapshot("screen", computed_at, available=False, stale=False)
         snap["inputs"] = json_safe(_as_mapping(inputs))
         return snap
+    # Tickers that won synthesis (possibly ranked >10 within a strategy) must
+    # keep their per-strategy detail so explain_screen has the evidence.
+    synth_tickers = {
+        _field(p, "ticker")
+        for p in _compact_seq(synthesis, 1000)
+        if _field(p, "ticker")
+    }
+
+    def _project(s: Any) -> dict[str, Any]:
+        return {
+            "ticker": _field(s, "ticker"),
+            "direction": _field(s, "direction"),
+            "score": _field(s, "score"),
+            "notes": _compact_seq(_field(s, "notes"), 3),
+        }
+
     strategies = {}
     any_stale = False
     for sid, res in results_by_strategy.items():
         stale_tickers = _compact_seq(_field(res, "stale_tickers"), 1000)
         any_stale = any_stale or bool(stale_tickers)
+        all_sigs = _compact_seq(_field(res, "signals"), 100000)
+        leaders = all_sigs[:10]
+        seen = {id(x) for x in leaders}
+        # Append beyond-top-10 rows for synthesized-pick tickers (bounded).
+        extra = [
+            s for s in all_sigs[10:]
+            if id(s) not in seen and _field(s, "ticker") in synth_tickers
+        ][:10]
         strategies[str(sid)] = json_safe(
             {
                 "error": _field(res, "error"),
                 "n_triggered": _field(res, "n_triggered"),
                 "n_evaluated": _field(res, "n_evaluated"),
-                "signals": [
-                    {
-                        "ticker": _field(s, "ticker"),
-                        "direction": _field(s, "direction"),
-                        "score": _field(s, "score"),
-                        "notes": _compact_seq(_field(s, "notes"), 3),
-                    }
-                    for s in _compact_seq(_field(res, "signals"), 10)
-                ],
+                "signals": [_project(s) for s in leaders + extra],
                 "stale_tickers": stale_tickers,
             }
         )
@@ -312,13 +328,18 @@ def analysis_snapshot(
             for c in _compact_seq(candidates, 8)
         ]
     )
-    # Compact upstream-status summary so chat can cite data provenance/freshness.
+    # Compact upstream-status summary so chat can cite data provenance/freshness
+    # AND specific envelope ids / delay assumptions / warnings (the system
+    # prompt asks the model to cite envelope ids).
     snap["sources"] = json_safe(
         [
             {
+                "tool_call_id": _field(e, "tool_call_id"),
                 "source": _field(e, "source"),
                 "confidence": _field(e, "confidence"),
+                "delay_assumption": _field(e, "delay_assumption"),
                 "as_of": _field(e, "as_of"),
+                "warnings": _compact_seq(_field(e, "warnings"), 3),
             }
             for e in _compact_seq(envelopes, 10)
         ]
@@ -407,42 +428,56 @@ def synthesise_cross_strategy(
     that strategy's contribution. The LLM is NOT involved.
     """
 
-    agg: dict[str, dict[str, Any]] = {}
+    # Aggregate by (ticker, DIRECTION) so opposite stances never count as
+    # agreement: a long_call and a long_put on the same ticker are distinct
+    # buckets. Resonance = how many strategies AGREE on a direction.
+    by_td: dict[tuple[str, Any], dict[str, Any]] = {}
     for sid in sorted(results_by_strategy.keys()):
         res = results_by_strategy.get(sid) or {}
-        if res.get("error"):
+        if _field(res, "error"):
             continue
-        signals = list(res.get("signals") or [])
-        stale = set(res.get("stale_tickers") or [])
+        stale = set(_compact_seq(_field(res, "stale_tickers"), 100000))
         # Deduplicate each strategy's signals by ticker BEFORE scoring so one
         # strategy contributes at most once per ticker (keep the strongest row).
         best_by_ticker: dict[str, tuple[float, Any]] = {}
-        for s in signals:
-            tk = s.get("ticker")
+        for s in _compact_seq(_field(res, "signals"), 100000):
+            tk = _field(s, "ticker")
             if not tk or tk in stale:
                 continue
-            score = float(s.get("score") or 0.0)
+            try:
+                score = float(_field(s, "score") or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
             if tk not in best_by_ticker or abs(score) > abs(best_by_ticker[tk][0]):
-                best_by_ticker[tk] = (score, s.get("direction"))
+                best_by_ticker[tk] = (score, _field(s, "direction"))
         scored = [(tk, sc, d) for tk, (sc, d) in best_by_ticker.items()]
         if not scored:
             continue
         max_score = max((abs(sc) for _t, sc, _d in scored), default=0.0)
         for ticker, score, direction in scored:
             norm = (score / max_score) if max_score > 0 else 0.0
-            entry = agg.setdefault(
-                ticker,
-                {"ticker": ticker, "resonance": 0, "combined_score": 0.0,
-                 "supporting": [], "directions": {}},
+            entry = by_td.setdefault(
+                (ticker, direction),
+                {"ticker": ticker, "direction": direction, "resonance": 0,
+                 "combined_score": 0.0, "supporting": []},
             )
             if sid not in entry["supporting"]:
                 entry["supporting"].append(sid)
                 entry["resonance"] += 1
             entry["combined_score"] += norm
-            entry["directions"][sid] = direction
+
+    # Collapse to one row per ticker: keep its DOMINANT directional stance
+    # (most agreeing strategies, then highest combined score, then direction).
+    per_ticker: dict[str, dict[str, Any]] = {}
+    for entry in by_td.values():
+        tk = entry["ticker"]
+        cur = per_ticker.get(tk)
+        key = (entry["resonance"], round(entry["combined_score"], 6), str(entry["direction"]))
+        if cur is None or key > (cur["resonance"], round(cur["combined_score"], 6), str(cur["direction"])):
+            per_ticker[tk] = entry
 
     ranked = sorted(
-        agg.values(),
+        per_ticker.values(),
         key=lambda e: (-e["resonance"], -round(e["combined_score"], 6), e["ticker"]),
     )
     for e in ranked:
@@ -568,9 +603,6 @@ def build_context(
                 lines.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
                 continue
             v = snap.get("verdict") if isinstance(snap.get("verdict"), Mapping) else {}
-            srcs = ",".join(
-                escape_untrusted(_field(s, "source")) for s in (snap.get("sources") or [])[:6]
-            )
             conv = v.get("conviction")
             lines.append(
                 f"  {escape_untrusted(ticker)}: verdict={escape_untrusted(v.get('action'))} "
@@ -596,8 +628,17 @@ def build_context(
                     f"BE={escape_untrusted(_field(c, 'breakeven'))} "
                     f"maxloss={escape_untrusted(_field(c, 'max_loss'))}"
                 )
-            if srcs:
-                lines.append(f"      sources=[{srcs}]")
+            # Per-envelope status so chat can cite envelope ids / delays /
+            # warnings (the system prompt asks the model to cite envelope ids).
+            for e in (snap.get("sources") or [])[:6]:
+                warns = "; ".join(escape_untrusted(w) for w in (_field(e, "warnings") or []))
+                lines.append(
+                    f"      [{escape_untrusted(_field(e, 'tool_call_id'))}] "
+                    f"{escape_untrusted(_field(e, 'source'))} "
+                    f"conf={escape_untrusted(_field(e, 'confidence'))} "
+                    f"delay={escape_untrusted(_field(e, 'delay_assumption'))}"
+                    + (f" warnings=[{warns}]" if warns else "")
+                )
 
     # --- ML (per ticker) — newest-first; unavailable shown explicitly ---
     lines.append(section("## ML direction signal", "## ML 方向信号"))
@@ -611,10 +652,21 @@ def build_context(
             if not snap.get("available"):
                 lines.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
                 continue
-            sig = snap.get("signal") or {}
+            sig = snap.get("signal") if isinstance(snap.get("signal"), Mapping) else {}
+            wl = sig.get("wilson_ci_lower")
+            wu = sig.get("wilson_ci_upper")
             lines.append(
                 f"  {escape_untrusted(ticker)}: prob_up={escape_untrusted(sig.get('prob_up'))} "
+                f"class={escape_untrusted(sig.get('class_label'))} "
                 f"credibility={escape_untrusted(sig.get('credibility'))} computed_at={ca}{tag}"
+            )
+            # Bounded credibility evidence so chat can explain the reported
+            # credibility from grounded values (matches the gauge).
+            lines.append(
+                f"      oos_acc={escape_untrusted(sig.get('oos_accuracy'))} "
+                f"wilson95=[{escape_untrusted(wl)},{escape_untrusted(wu)}] "
+                f"baseline={escape_untrusted(sig.get('class_baseline_accuracy'))} "
+                f"n_oos={escape_untrusted(sig.get('n_oos_samples'))}"
             )
 
     # --- Ledger ---

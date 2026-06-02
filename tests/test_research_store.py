@@ -401,6 +401,69 @@ def test_build_context_preserves_analysis_verdict_and_candidate_details():
     assert "K=200.0" in ctx and "BE=202.5" in ctx and "maxloss=250.0" in ctx
 
 
+def test_synthesis_opposite_directions_do_not_count_as_agreement():
+    results = {
+        "s1": _res([{"ticker": "AAPL", "score": 1.0, "direction": "long_call_observation"}]),
+        "s2": _res([{"ticker": "AAPL", "score": 1.0, "direction": "long_put_observation"}]),
+    }
+    out = {p["ticker"]: p for p in rs.synthesise_cross_strategy(results, top_n=5)}
+    # One call + one put is NOT 2-strategy agreement.
+    assert out["AAPL"]["resonance"] == 1
+
+
+def test_synthesis_dominant_direction_excludes_contradictory_support():
+    results = {
+        "s1": _res([{"ticker": "AAPL", "score": 1.0, "direction": "long_call_observation"}]),
+        "s2": _res([{"ticker": "AAPL", "score": 1.0, "direction": "long_call_observation"}]),
+        "s3": _res([{"ticker": "AAPL", "score": 5.0, "direction": "long_put_observation"}]),
+    }
+    out = {p["ticker"]: p for p in rs.synthesise_cross_strategy(results, top_n=5)}
+    aapl = out["AAPL"]
+    assert aapl["resonance"] == 2                       # the two agreeing calls
+    assert aapl["direction"] == "long_call_observation"
+    assert "s3" not in aapl["supporting"]               # the contradicting put excluded
+
+
+def test_screen_snapshot_retains_detail_for_synthesized_picks():
+    sigs = [{"ticker": f"L{i}", "score": 10 - i, "notes": ["x"]} for i in range(11)]
+    sigs.append({"ticker": "DEEP", "score": 0.1, "notes": ["deep evidence"]})  # index 11
+    results = {"s1": {"error": None, "n_triggered": 12, "signals": sigs}}
+    snap = rs.screen_snapshot(results, [{"ticker": "DEEP"}], "t")
+    tickers = [s["ticker"] for s in snap["strategies"]["s1"]["signals"]]
+    assert "DEEP" in tickers  # synthesized pick kept despite ranking beyond top-10
+    deep = next(s for s in snap["strategies"]["s1"]["signals"] if s["ticker"] == "DEEP")
+    assert deep["notes"] == ["deep evidence"]
+
+
+def test_build_context_retains_envelope_status_for_analysis():
+    store = rs.init_store()
+    store["analysis"]["AAPL"] = rs.analysis_snapshot(
+        "AAPL", {"action": "SKIP", "skip_reason": "x"}, [], "2026-06-02T00:00:00",
+        envelopes=[{"tool_call_id": "tc-77", "source": "moomoo", "confidence": "ok",
+                    "delay_assumption": "realtime_entitled", "warnings": ["thin book"]}],
+    )
+    ctx = rs.build_context(store, "en")
+    assert "tc-77" in ctx
+    assert "realtime_entitled" in ctx
+    assert "thin book" in ctx
+
+
+def test_build_context_retains_ml_credibility_evidence():
+    store = rs.init_store()
+    store["ml"]["AAPL"] = rs.ml_snapshot(
+        "AAPL",
+        {"prob_up": 0.62, "class_label": "up", "credibility": "low",
+         "oos_accuracy": 0.55, "wilson_ci_lower": 0.40, "wilson_ci_upper": 0.70,
+         "class_baseline_accuracy": 0.52, "n_oos_samples": 40},
+        "2026-06-02T00:00:00",
+    )
+    ctx = rs.build_context(store, "en")
+    assert "class=up" in ctx
+    assert "oos_acc=0.55" in ctx
+    assert "wilson95=[0.4,0.7]" in ctx
+    assert "baseline=0.52" in ctx and "n_oos=40" in ctx
+
+
 def test_synthesis_low_rank_resonant_ticker_beats_oneoff_leaders():
     # RESONANT triggers in 3 strategies with LOW scores; 4 strategies each have
     # a unique HIGH-score one-off. With the full triggered set fed to synthesis,

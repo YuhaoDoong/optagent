@@ -348,9 +348,12 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     ]
     env_summary = [
         {
+            "tool_call_id": getattr(e, "tool_call_id", None),
             "source": e.source,
             "confidence": e.confidence.value,
+            "delay_assumption": getattr(e, "delay_assumption", None),
             "as_of": e.as_of.isoformat() if e.as_of else None,
+            "warnings": list(getattr(e, "warnings", []) or []),
         }
         for e in (result.envelopes or [])
     ]
@@ -667,8 +670,10 @@ def _tab_screen(lang: str = "en") -> None:
                 )
             st.subheader(t("screen.explain_title", lang))
             st.markdown(prose)
-        except RuntimeError as e:
-            if "No LLM provider configured" in str(e):
+        except Exception as e:  # noqa: BLE001 — provider SDKs raise many error types
+            # Timeouts, rate limits, and API errors are NOT RuntimeError; render
+            # the localized error instead of crashing the interaction.
+            if isinstance(e, RuntimeError) and "No LLM provider configured" in str(e):
                 st.error(t("chat.no_llm", lang))
             else:
                 st.error(t("chat.error", lang, err=str(e)))
@@ -864,9 +869,9 @@ def _chat_panel(sidebar_opts: dict[str, Any]) -> None:
             st.markdown(reply)
         history.append(ChatMessage(role="assistant", content=reply))
         st.session_state["chat_history"] = history
-    except RuntimeError as e:
+    except Exception as e:  # noqa: BLE001 — provider SDKs raise many error types
         msg = str(e)
-        if "No LLM provider configured" in msg:
+        if isinstance(e, RuntimeError) and "No LLM provider configured" in msg:
             st.error(t("chat.no_llm", lang))
         else:
             st.error(t("chat.error", lang, err=msg))

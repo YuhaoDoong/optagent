@@ -145,6 +145,24 @@ def test_non_empty_ledger_writes_available_snapshot(monkeypatch):
     assert led["inputs"].get("days_back") is not None
 
 
+def test_explain_handler_renders_error_on_provider_exception(monkeypatch):
+    # A non-RuntimeError provider failure (timeout/rate-limit/APIError) must be
+    # caught and rendered, not crash the Streamlit interaction.
+    def _boom(*a, **k):
+        raise ValueError("simulated provider timeout")
+
+    monkeypatch.setattr("optagent.web.screen_llm.explain_screen", _boom)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["last_screen"] = {
+        "results": {"s1": {"error": None, "signals": [], "n_triggered": 0}},
+        "synthesis": [],
+    }
+    at.run()
+    explain_btn = [b for b in at.button if "解释" in b.label][0]
+    explain_btn.click().run()
+    assert not at.exception, f"explain handler did not catch provider error: {at.exception}"
+
+
 def test_run_multi_strategy_does_not_pretruncate_before_synthesis(monkeypatch):
     # Regression for the review [P1]: each strategy must be screened with an
     # UNBOUNDED top-N (the full universe) so synthesis sees every triggered row.
