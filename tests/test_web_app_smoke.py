@@ -145,6 +145,32 @@ def test_non_empty_ledger_writes_available_snapshot(monkeypatch):
     assert led["inputs"].get("days_back") is not None
 
 
+def test_run_multi_strategy_does_not_pretruncate_before_synthesis(monkeypatch):
+    # Regression for the review [P1]: each strategy must be screened with an
+    # UNBOUNDED top-N (the full universe) so synthesis sees every triggered row.
+    captured = {}
+
+    class _Res:
+        top_signals = []
+        n_triggered = 0
+        n_evaluated = 0
+        stale_bars = []
+        top_near_misses = []
+
+    def _fake_screen(strategy, universe, top_n):
+        captured["top_n"] = top_n
+        return _Res()
+
+    monkeypatch.setattr("optagent.strategies.get_strategy", lambda sid: object())
+    monkeypatch.setattr("optagent.strategies.screen_universe", _fake_screen)
+
+    from optagent.web.app import _run_multi_strategy
+
+    universe = [f"T{i}" for i in range(85)]
+    _run_multi_strategy(["s1"], universe)
+    assert captured["top_n"] == len(universe)  # not the user's small Top-N
+
+
 def test_ml_plain_render_does_not_call_provider(monkeypatch):
     called = {"ml": 0}
 

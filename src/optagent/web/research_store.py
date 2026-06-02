@@ -567,19 +567,35 @@ def build_context(
             if not snap.get("available"):
                 lines.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
                 continue
-            v = snap.get("verdict") or {}
+            v = snap.get("verdict") if isinstance(snap.get("verdict"), Mapping) else {}
             srcs = ",".join(
-                escape_untrusted(s.get("source")) for s in (snap.get("sources") or [])[:6]
+                escape_untrusted(_field(s, "source")) for s in (snap.get("sources") or [])[:6]
             )
-            cands = ",".join(
-                escape_untrusted(c.get("occ_symbol")) for c in (snap.get("candidates") or [])[:5]
-            )
+            conv = v.get("conviction")
             lines.append(
                 f"  {escape_untrusted(ticker)}: verdict={escape_untrusted(v.get('action'))} "
-                f"skip_reason={escape_untrusted(v.get('skip_reason'))} computed_at={ca}{tag}"
+                f"skip_reason={escape_untrusted(v.get('skip_reason'))} "
+                f"conviction={escape_untrusted(conv)} computed_at={ca}{tag}"
             )
-            if cands:
-                lines.append(f"      candidates=[{cands}]")
+            # A bounded subset of the verdict rationale so chat can answer
+            # "why this verdict".
+            reasons = _compact_seq(v.get("primary_reasons"), 2)
+            if reasons:
+                joined = "; ".join(escape_untrusted(r) for r in reasons)
+                lines.append(f"      reasons: {joined}")
+            # Per-candidate metrics (strike / mid / delta / breakeven / max-loss)
+            # so chat can answer questions about the contract numbers.
+            for c in (snap.get("candidates") or [])[:3]:
+                lines.append(
+                    f"      {escape_untrusted(_field(c, 'occ_symbol'))} "
+                    f"{escape_untrusted(_field(c, 'right'))} "
+                    f"K={escape_untrusted(_field(c, 'strike'))} "
+                    f"mid={escape_untrusted(_field(c, 'mid'))} "
+                    f"delta={escape_untrusted(_field(c, 'delta'))} "
+                    f"iv={escape_untrusted(_field(c, 'iv'))} "
+                    f"BE={escape_untrusted(_field(c, 'breakeven'))} "
+                    f"maxloss={escape_untrusted(_field(c, 'max_loss'))}"
+                )
             if srcs:
                 lines.append(f"      sources=[{srcs}]")
 

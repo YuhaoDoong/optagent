@@ -384,6 +384,40 @@ def test_sanitize_context_block_defangs_valid_wrapper_semantic_injection():
     assert "you are now" not in out
 
 
+def test_build_context_preserves_analysis_verdict_and_candidate_details():
+    store = rs.init_store()
+    store["analysis"]["AAPL"] = rs.analysis_snapshot(
+        "AAPL",
+        {"action": "LONG_CALL", "skip_reason": None, "conviction": 0.42,
+         "primary_reasons": ["IV cheap vs HV", "catalyst within DTE"]},
+        [{"occ_symbol": "AAPL_C200", "right": "call", "strike": 200.0, "mid": 2.5,
+          "delta": 0.42, "iv": 0.28, "breakeven": 202.5, "max_loss": 250.0}],
+        "2026-06-02T00:00:00",
+    )
+    ctx = rs.build_context(store, "en")
+    # Verdict rationale + per-candidate numbers must be answerable from grounding.
+    assert "conviction=0.42" in ctx
+    assert "IV cheap vs HV" in ctx
+    assert "K=200.0" in ctx and "BE=202.5" in ctx and "maxloss=250.0" in ctx
+
+
+def test_synthesis_low_rank_resonant_ticker_beats_oneoff_leaders():
+    # RESONANT triggers in 3 strategies with LOW scores; 4 strategies each have
+    # a unique HIGH-score one-off. With the full triggered set fed to synthesis,
+    # resonance-first ranking puts RESONANT on top (the bug truncated per-strategy
+    # rows before synthesis, which would have dropped it).
+    results = {}
+    for i in range(3):
+        results[f"r{i}"] = _res(
+            [{"ticker": f"LEAD{i}", "score": 9.0}, {"ticker": "RESONANT", "score": 0.1}]
+        )
+    for i in range(4):
+        results[f"o{i}"] = _res([{"ticker": f"ONE{i}", "score": 9.0}])
+    out = rs.synthesise_cross_strategy(results, top_n=5)
+    assert out[0]["ticker"] == "RESONANT"
+    assert out[0]["resonance"] == 3
+
+
 def test_snapshot_builders_coerce_all_malformed_projections():
     class Weird:  # truthy, non-subscriptable, non-iterable, non-int
         def __str__(self):

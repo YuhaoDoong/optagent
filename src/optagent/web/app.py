@@ -529,21 +529,27 @@ def _build_universe(sector: str, sector_any: str) -> list[str]:
     return universe
 
 
-def _run_multi_strategy(strategy_ids: list[str], universe: list[str], limit: int):
+def _run_multi_strategy(strategy_ids: list[str], universe: list[str]):
     """Run each strategy sequentially with per-strategy error isolation.
 
     Per-strategy execution is isolated by `research_store.run_strategies`, so
-    one strategy raising never aborts the others. Returns
+    one strategy raising never aborts the others. Each strategy is run with an
+    UNBOUNDED top-N (the full universe) so EVERY triggered row is preserved for
+    cross-strategy synthesis — the user's Top-N is applied only after
+    aggregation (and to the per-strategy display tables), so a ticker ranked
+    N+1 within a strategy can still win on resonance. Returns
     results_by_strategy: {sid: {signals, n_triggered, n_evaluated,
     stale_tickers, stale_bars, near_misses, error}}.
     """
 
     from optagent.strategies import get_strategy, screen_universe
 
+    full_n = max(len(universe), 1)  # never truncate triggered rows pre-synthesis
+
     def run_one(sid: str) -> dict[str, Any]:
         if not universe:
             return {"error": "empty_universe", "signals": []}
-        res = screen_universe(get_strategy(sid), universe, top_n=int(limit))
+        res = screen_universe(get_strategy(sid), universe, top_n=full_n)
         return {
             "error": None,
             "signals": [_signal_to_dict(s) for s in res.top_signals],
@@ -596,8 +602,10 @@ def _tab_screen(lang: str = "en") -> None:
                 with st.spinner(
                     t("screen.spinner", lang, strategy=", ".join(strategy_ids), n=len(universe))
                 ):
-                    results = _run_multi_strategy(strategy_ids, universe, int(limit))
+                    results = _run_multi_strategy(strategy_ids, universe)
+                # Synthesis sees the FULL triggered set; Top-N applies after.
                 synthesis = rs.synthesise_cross_strategy(results, top_n=int(limit))
+                st.session_state["screen_display_limit"] = int(limit)
                 # Persist so reruns (e.g. the Explain button) keep the data, and
                 # the chat panel can ground on it.
                 st.session_state["last_screen"] = {"results": results, "synthesis": synthesis}
@@ -666,6 +674,9 @@ def _tab_screen(lang: str = "en") -> None:
                 st.error(t("chat.error", lang, err=str(e)))
 
     # --- Per-strategy result tables + diagnostics ---
+    # Synthesis ran on the full triggered set above; the per-strategy tables
+    # show only the user's Top-N for readability.
+    display_limit = int(st.session_state.get("screen_display_limit", 5))
     st.subheader(t("screen.per_strategy_title", lang))
     import plotly.express as px
 
@@ -687,7 +698,7 @@ def _tab_screen(lang: str = "en") -> None:
                         use_container_width=True, hide_index=True,
                     )
 
-            sigs = res.get("signals") or []
+            sigs = (res.get("signals") or [])[:display_limit]
             if sigs:
                 df = strategy_signal_table(sigs)
                 st.dataframe(df, use_container_width=True, hide_index=True)
@@ -698,7 +709,7 @@ def _tab_screen(lang: str = "en") -> None:
             else:
                 st.info(t("screen.no_trigger", lang))
 
-            nm = res.get("near_misses") or []
+            nm = (res.get("near_misses") or [])[:display_limit]
             if nm:
                 with st.expander(t("screen.near_misses_expander", lang, n=len(nm))):
                     st.dataframe(
