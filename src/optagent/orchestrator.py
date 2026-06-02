@@ -142,32 +142,40 @@ _QUOTELESS_REJECTIONS = frozenset(
 )
 
 
-def _diagnose_empty_screen(screener_output: ScreenerOutput) -> tuple[SkipReason, list[str]]:
+def _diagnose_empty_screen(
+    screener_output: ScreenerOutput, lang: str = "en"
+) -> tuple[SkipReason, list[str]]:
     """Explain WHY the screener produced zero candidates.
 
     Distinguishes a data-provider problem (no live bid/ask, market closed,
     Yahoo returned a quote-less chain) from a legitimate "quotes were fine but
     nothing met the liquidity / delta bar". The user-facing message is the
     single most-actionable thing we can say, so we lead with the dominant
-    cause and the concrete next step.
+    cause and the concrete next step. Messages are localised (en/zh).
     """
 
     from collections import Counter
 
+    zh = lang == "zh"
     rejected = screener_output.rejected
     summary = screener_output.inputs_summary or {}
     n_rows = int(summary.get("n_rows_in", len(rejected)) or 0)
 
     if n_rows == 0:
-        return (
-            SkipReason.stale_required_input,
-            [
+        if zh:
+            msgs = [
+                "数据源对所选到期日返回了空的期权链(0 行)。这是数据可用性问题,"
+                "不是策略结论。请在美股盘中(美东 09:30–16:00)重跑;若持续,"
+                "说明数据源(yfinance/Yahoo)异常。"
+            ]
+        else:
+            msgs = [
                 "The data provider returned an EMPTY options chain (zero rows) for "
                 "the chosen expiry. This is a data availability problem, not a "
                 "strategy result. Re-run during US market hours (09:30–16:00 ET); "
                 "if it persists the provider (yfinance/Yahoo) is degraded."
-            ],
-        )
+            ]
+        return SkipReason.stale_required_input, msgs
 
     counts = Counter(reason for _occ, reason in rejected)
     quoteless = sum(n for reason, n in counts.items() if reason in _QUOTELESS_REJECTIONS)
@@ -177,32 +185,46 @@ def _diagnose_empty_screen(screener_output: ScreenerOutput) -> tuple[SkipReason,
     if quoteless / total >= 0.8:
         pct = round(100 * quoteless / total)
         exp = summary.get("expiration")
-        return (
-            SkipReason.stale_required_input,
-            [
+        if zh:
+            exp_str = f"(到期日 {exp})" if exp else ""
+            msgs = [
+                f"期权链返回时没有实时买卖报价 —— {quoteless}/{total} 行({pct}%)"
+                f"没有可用的双边报价(主因:{dominant}){exp_str}。这几乎总是意味着"
+                f"数据源没有实时行情快照:美股已收盘,或 yfinance/Yahoo 只返回了"
+                f"最后成交价而买卖盘口和持仓量(OI)为 0。",
+                "这是数据问题,不是对该股票的判断。请在美股常规交易时段"
+                "(美东 09:30–16:00)重跑以获取真实报价;筛选器刻意拒绝在无报价的"
+                "数据上下结论,而不是瞎猜价格。",
+            ]
+        else:
+            exp_str = f" (expiry {exp})." if exp else "."
+            msgs = [
                 f"The options chain came back WITHOUT live bid/ask quotes — "
                 f"{quoteless}/{total} rows ({pct}%) had no usable two-sided quote "
                 f"(dominant reason: {dominant}). This almost always means the data "
                 f"provider had no live market snapshot: the US market is closed, or "
                 f"yfinance/Yahoo returned only last-trade prices with zeroed "
-                f"bid/ask and open-interest"
-                + (f" (expiry {exp})." if exp else ".") ,
+                f"bid/ask and open-interest" + exp_str,
                 "This is a DATA problem, not a verdict against the stock. Re-run "
                 "during US regular trading hours (09:30–16:00 ET) to get real "
                 "quotes; the screener intentionally refuses to act on quote-less "
                 "rows rather than guess prices.",
-            ],
-        )
+            ]
+        return SkipReason.stale_required_input, msgs
 
     # Genuine: quotes were present, nothing met the bar.
     bits = ", ".join(f"{reason}×{n}" for reason, n in counts.most_common(4))
-    return (
-        SkipReason.no_candidates_after_screen,
-        [
+    if zh:
+        msgs = [
+            f"有真实报价,但没有合约满足流动性 / 到期日 / delta 门槛"
+            f"(共筛掉 {total} 行;明细:{bits})。"
+        ]
+    else:
+        msgs = [
             f"Quotes were available but no contract met the liquidity / DTE / "
             f"delta bar ({total} rows screened out; breakdown: {bits}).",
-        ],
-    )
+        ]
+    return SkipReason.no_candidates_after_screen, msgs
 
 
 def _build_template_long_verdict(
@@ -255,6 +277,7 @@ def analyze(
     model_version: str | None = None,
     price_table: Mapping[str, Any] | None = None,
     ttl_table: Mapping[str, Mapping[str, Any]] | None = None,
+    lang: str = "en",
 ) -> AnalyzeResult:
     """Run an end-to-end analysis for `ticker`.
 
@@ -339,7 +362,7 @@ def analyze(
                 if env.confidence is Confidence.unavailable
             ],
         )
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict), lang=lang)
         return _finalize(
             run_config,
             verdict,
@@ -417,9 +440,9 @@ def analyze(
     screener_output = screen(screener_inputs)
 
     if not screener_output.candidates:
-        skip_reason, primary_reasons = _diagnose_empty_screen(screener_output)
+        skip_reason, primary_reasons = _diagnose_empty_screen(screener_output, lang)
         verdict = _build_skip_verdict(skip_reason, primary_reasons)
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict), lang=lang)
         return _finalize(
             run_config,
             verdict,
@@ -462,6 +485,7 @@ def analyze(
             write_ledger=write_ledger,
             dte=dte,
             ml_signal=ml_signal,
+            lang=lang,
         )
 
     # ---- template_only fall-through ----
@@ -479,6 +503,7 @@ def analyze(
         write_ledger=write_ledger,
         dte=dte,
         ml_signal_dict=_ml_signal_dict,
+        lang=lang,
     )
 
 
@@ -497,18 +522,24 @@ def _run_template_only_path(
     write_ledger: bool,
     dte: int,
     ml_signal_dict: dict | None = None,
+    lang: str = "en",
 ) -> AnalyzeResult:
     # template_only mode: no LLM → neutral bias → SKIP (safe default).
-    verdict = _build_skip_verdict(
-        SkipReason.no_candidates_after_screen,
-        [
+    if lang == "zh":
+        _tmpl_reasons = [
+            "模板模式(未启用 LLM)给出的方向为'中性';agent 默认 SKIP 而不是瞎猜。",
+            f"筛选器有 {len(screener_output.candidates)} 个候选合约存活;"
+            "勾选启用 LLM 综合分析即可让 LLM 给出方向判断(做多/做空)和理由。",
+        ]
+    else:
+        _tmpl_reasons = [
             "Template-only mode (no LLM) produced 'neutral' direction; "
             "the agent defaults to SKIP rather than guessing.",
             f"{len(screener_output.candidates)} candidate(s) survived the screener; "
             "pass --enable-llm to let the LLM synthesise a verdict.",
-        ],
-    )
-    memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
+        ]
+    verdict = _build_skip_verdict(SkipReason.no_candidates_after_screen, _tmpl_reasons)
+    memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict), lang=lang)
     return _finalize(
         run_config,
         verdict,
@@ -547,6 +578,7 @@ def _run_llm_path(
     write_ledger: bool,
     dte: int,
     ml_signal: MLDirectionSignal | None = None,
+    lang: str = "en",
 ) -> AnalyzeResult:
     from .llm import build_user_prompt
 
@@ -555,7 +587,7 @@ def _run_llm_path(
             SkipReason.unknown_model_pricing,
             ["No model_version supplied and price_table has no default_model."],
         )
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict), lang=lang)
         return _finalize(
             run_config,
             verdict,
@@ -609,7 +641,7 @@ def _run_llm_path(
                 "Falling back to template_only behaviour for this run.",
             ],
         )
-        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict))
+        memo = render_template(verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict), lang=lang)
         return _finalize(
             run_config,
             verdict,
@@ -650,19 +682,25 @@ def _run_llm_path(
             news_excerpts=news_excerpts or None,
             ml_signal=ml_signal.to_dict() if ml_signal is not None else None,
             max_output_tokens=budget.max_output_tokens,
+            lang=lang,
         )
     except Exception as e:  # noqa: BLE001 — fail closed on any LLM error
-        verdict = _build_skip_verdict(
-            SkipReason.critical_provider_unavailable,
-            [
+        if lang == "zh":
+            _fail_reasons = [
+                f"LLM 综合分析失败({type(e).__name__}: {str(e)[:160]})。agent "
+                "fail-closed 到 SKIP,而不是瞎猜结论。",
+                "请重试;若持续,检查供应商/模型、网络,或调高输出 token 预算。",
+            ]
+        else:
+            _fail_reasons = [
                 f"LLM synthesis failed ({type(e).__name__}: {str(e)[:160]}). The "
                 "agent fails closed to SKIP rather than guess a verdict.",
                 "Re-run; if it persists, check the provider/model, network, or "
                 "raise the output-token budget.",
-            ],
-        )
+            ]
+        verdict = _build_skip_verdict(SkipReason.critical_provider_unavailable, _fail_reasons)
         memo = render_template(
-            verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict)
+            verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict), lang=lang
         )
         return _finalize(
             run_config,
@@ -688,7 +726,7 @@ def _run_llm_path(
         )
 
     pre_render = render_template(
-        synthesis.verdict, envelopes, cited_fred=_cites_fred(synthesis.verdict), cited_volume_oi_context=_cites_volume_oi(synthesis.verdict)
+        synthesis.verdict, envelopes, cited_fred=_cites_fred(synthesis.verdict), cited_volume_oi_context=_cites_volume_oi(synthesis.verdict), lang=lang
     )
 
     outcome = validate(
@@ -703,7 +741,7 @@ def _run_llm_path(
 
     final_verdict = outcome.final_verdict
     final_memo = render_template(
-        final_verdict, envelopes, cited_fred=_cites_fred(final_verdict), cited_volume_oi_context=_cites_volume_oi(final_verdict)
+        final_verdict, envelopes, cited_fred=_cites_fred(final_verdict), cited_volume_oi_context=_cites_volume_oi(final_verdict), lang=lang
     )
 
     return _finalize(

@@ -417,8 +417,14 @@ def synthesise(
     ml_signal: dict | None = None,
     max_output_tokens: int = 2000,
     timeout_s: int = 45,
+    lang: str = "en",
 ) -> SynthesisResult:
-    """End-to-end synthesis: build prompt → call LLM → assemble Verdict."""
+    """End-to-end synthesis: build prompt → call LLM → assemble Verdict.
+
+    `lang` controls the NATURAL-LANGUAGE of the rationale only (primary_reasons
+    / dissenting_factors). The enum, OCC selection, and every numeric remain
+    canonical and language-independent — the validator is unaffected.
+    """
 
     prompt_text = build_user_prompt(
         ticker=ticker,
@@ -429,8 +435,15 @@ def synthesise(
         sec_excerpts=sec_excerpts,
         ml_signal=ml_signal,
     )
+    system_prompt = SYSTEM_PROMPT
+    if lang == "zh":
+        system_prompt = SYSTEM_PROMPT + (
+            "\n8. 语言:`primary_reasons` 和 `dissenting_factors` 的每一条都必须用"
+            "简体中文书写。`direction` 仍用枚举值(SKIP/LONG_CALL/LONG_PUT),"
+            "`chosen_occ` 仍用原始 OCC 符号,数字保持不变。"
+        )
     tool_input, raw_response = client.synthesise(
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         user_prompt=prompt_text,
         tool=EMIT_VERDICT_TOOL,
         max_output_tokens=max_output_tokens,

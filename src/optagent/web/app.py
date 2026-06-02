@@ -59,7 +59,7 @@ st.set_page_config(
 
 
 def _current_lang() -> str:
-    return st.session_state.get("lang", "en")
+    return st.session_state.get("lang", "zh")
 
 
 def _disclaimer_banner() -> None:
@@ -121,7 +121,7 @@ def _verdict_card(verdict_dict: dict[str, Any]) -> None:
 def _sidebar() -> dict[str, Any]:
     lang_options = supported_languages()
     lang_keys = [k for k, _ in lang_options]
-    current_lang = st.session_state.get("lang", "en")
+    current_lang = st.session_state.get("lang", "zh")
     try:
         idx = lang_keys.index(current_lang)
     except ValueError:
@@ -264,6 +264,7 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
             model_version=model,
             price_table=price_table,
             ttl_table=ttl_table,
+            lang=lang,
         )
 
     # Stash analysis context for the chat tab. summarise_analysis_for_context

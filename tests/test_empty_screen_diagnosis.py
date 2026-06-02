@@ -105,3 +105,47 @@ def test_skip_memo_includes_snapshot_and_keeps_no_contract_section():
 
 def test_market_snapshot_empty_when_no_known_fields():
     assert _market_snapshot_lines([_env({"unrelated": 1})]) == []
+
+
+# --- localisation (zh) -------------------------------------------------------
+
+
+def test_diagnosis_quoteless_is_chinese_when_lang_zh():
+    rejected = [(f"OCC{i}", "zero_bid") for i in range(53)]
+    reason, msgs = _diagnose_empty_screen(_screen_output(rejected, 53), lang="zh")
+    assert reason is SkipReason.stale_required_input
+    blob = " ".join(msgs)
+    assert "实时" in blob and "收盘" in blob
+    assert "53/53" in blob
+
+
+def test_skip_memo_renders_chinese_headers_and_snapshot():
+    v = Verdict(
+        disclaimer="RESEARCH ONLY.",
+        action=VerdictAction.skip,
+        skip_reason=SkipReason.stale_required_input,
+        primary_reasons=["期权链没有实时报价"],
+    )
+    envs = [
+        _env({"ticker": "AAPL", "last": 306.31}),
+        _env({"last_close": 306.31, "recent_high_60d": 312.5, "recent_low_60d": 246.6, "hv20_annual": 0.169}),
+    ]
+    memo = render_template(v, envs, lang="zh")
+    assert "结论:SKIP" in memo
+    assert "理由:" in memo
+    assert "市场快照" in memo
+    assert "现价" in memo
+    assert "60 日区间" in memo
+
+
+def test_skip_memo_default_lang_still_english():
+    # Default must stay English so existing replay/golden expectations hold.
+    v = Verdict(
+        disclaimer="RESEARCH ONLY.",
+        action=VerdictAction.skip,
+        skip_reason=SkipReason.stale_required_input,
+        primary_reasons=["no quotes"],
+    )
+    memo = render_template(v, [_env({"ticker": "AAPL", "last": 306.31})])
+    assert "Verdict: SKIP" in memo
+    assert "Market snapshot" in memo

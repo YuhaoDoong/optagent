@@ -55,28 +55,37 @@ def render_template(
     envelopes: list[Envelope],
     cited_fred: bool = False,
     cited_volume_oi_context: bool = False,
+    lang: str = "en",
 ) -> str:
     """Render a structured memo without invoking an LLM."""
 
     assert_supported_action(verdict.action)
+    zh = lang == "zh"
 
     lines: list[str] = []
     if verdict.action is VerdictAction.skip:
-        lines.append(f"Verdict: SKIP ({_skip_reason_label(verdict.skip_reason)})")
+        verdict_label = "结论:SKIP(不操作)" if zh else "Verdict: SKIP"
+        lines.append(f"{verdict_label} ({_skip_reason_label(verdict.skip_reason)})")
         lines.append("")
-        lines.append("Rationale:")
+        lines.append("理由:" if zh else "Rationale:")
         if verdict.primary_reasons:
             for r in verdict.primary_reasons:
                 lines.append(f"  - {r}")
         else:
-            lines.append("  - The pre-LLM screener did not produce an actionable candidate.")
+            lines.append(
+                "  - 前置筛选器没有产生可操作的候选。" if zh
+                else "  - The pre-LLM screener did not produce an actionable candidate."
+            )
         lines.append("")
         # Surface the market context we DID gather, even though no options
         # trade is recommended. A bare SKIP with no data reads like a failure;
         # this shows the user what the agent actually saw.
-        snapshot = _market_snapshot_lines(envelopes)
+        snapshot = _market_snapshot_lines(envelopes, lang=lang)
         if snapshot:
-            lines.append("Market snapshot (data gathered before the SKIP):")
+            lines.append(
+                "市场快照(SKIP 之前已抓取的数据):" if zh
+                else "Market snapshot (data gathered before the SKIP):"
+            )
             lines.extend(f"  - {s}" for s in snapshot)
             lines.append("")
     else:
@@ -173,13 +182,15 @@ def extract_required_notices_block(rendered_output: str) -> str:
     return rendered_output[start:end]
 
 
-def _market_snapshot_lines(envelopes: list[Envelope]) -> list[str]:
+def _market_snapshot_lines(envelopes: list[Envelope], lang: str = "en") -> list[str]:
     """Extract a human-readable market snapshot from upstream envelopes.
 
     Pure function of the envelope values (no timestamps), so it stays
     byte-stable under replay. Best-effort: any field that isn't present is
     silently skipped.
     """
+
+    zh = lang == "zh"
 
     spot = None
     last_close = high = low = hv20 = None
@@ -215,21 +226,33 @@ def _market_snapshot_lines(envelopes: list[Envelope]) -> list[str]:
     out: list[str] = []
     px = spot if spot is not None else last_close
     if px is not None:
-        out.append(f"Spot / last close: ${float(px):.2f}")
+        out.append(
+            (f"现价 / 最新收盘: ${float(px):.2f}") if zh
+            else f"Spot / last close: ${float(px):.2f}"
+        )
     if high is not None and low is not None:
         extra = ""
         if px is not None and float(high) != float(low):
             pos = (float(px) - float(low)) / (float(high) - float(low))
-            extra = f"  (at {pos:.0%} of the 60d range)"
-        out.append(f"60-day range: ${float(low):.2f} – ${float(high):.2f}{extra}")
+            extra = (f"  (处于 60 日区间的 {pos:.0%})" if zh
+                     else f"  (at {pos:.0%} of the 60d range)")
+        label = "60 日区间" if zh else "60-day range"
+        out.append(f"{label}: ${float(low):.2f} – ${float(high):.2f}{extra}")
     if hv20 is not None:
-        out.append(f"20-day realised volatility (annualised): {float(hv20):.1%}")
+        out.append(
+            (f"20 日已实现波动率(年化): {float(hv20):.1%}") if zh
+            else f"20-day realised volatility (annualised): {float(hv20):.1%}"
+        )
     if next_event is not None:
-        label, date, days = next_event
-        when = f"in {days}d" if isinstance(days, int) else "upcoming"
-        out.append(f"Next macro event: {label} on {date} ({when})")
+        ev_label, date, days = next_event
+        if zh:
+            when = f"还有 {days} 天" if isinstance(days, int) else "即将到来"
+            out.append(f"下一宏观事件: {ev_label} 于 {date}({when})")
+        else:
+            when = f"in {days}d" if isinstance(days, int) else "upcoming"
+            out.append(f"Next macro event: {ev_label} on {date} ({when})")
     if macro_bits:
-        out.append("Macro (FRED): " + ", ".join(macro_bits))
+        out.append(("宏观(FRED): " if zh else "Macro (FRED): ") + ", ".join(macro_bits))
     return out
 
 

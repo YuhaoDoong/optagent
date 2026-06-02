@@ -18,10 +18,24 @@ from pathlib import Path
 
 
 def _find_dotenv(start: Path) -> Path | None:
-    """Walk up from `start` looking for a `.env` file (repo-root convention)."""
+    """Walk up from `start` looking for a `.env` file (repo-root convention).
+
+    Falls back to the repo/install root relative to THIS file, so the `.env`
+    is found even when the process was launched from an unrelated cwd (e.g.
+    `streamlit run` started from the user's home directory).
+    """
 
     for parent in [start, *start.parents]:
         candidate = parent / ".env"
+        if candidate.is_file():
+            return candidate
+    # Package-relative fallback: <root>/src/optagent/env_loader.py
+    pkg_file = Path(__file__).resolve()
+    for up in (2, 1, 3):
+        try:
+            candidate = pkg_file.parents[up] / ".env"
+        except IndexError:
+            continue
         if candidate.is_file():
             return candidate
     return None

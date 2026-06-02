@@ -33,6 +33,17 @@ def _candidate_dirs(explicit: Path | None) -> list[Path]:
     out = [here / "config"]
     for parent in here.parents:
         out.append(parent / "config")
+    # Fall back to the install/repo root relative to THIS file, so the config
+    # is found even when the process was launched from an unrelated cwd (e.g.
+    # `streamlit run` started from the user's home directory). src layout:
+    # <root>/src/optagent/config_loader.py  ->  parents[2] == <root>.
+    pkg_file = Path(__file__).resolve()
+    out.append(pkg_file.parent / "config")  # bundled inside the package
+    for up in (2, 1, 3):
+        try:
+            out.append(pkg_file.parents[up] / "config")
+        except IndexError:
+            pass
     return out
 
 
