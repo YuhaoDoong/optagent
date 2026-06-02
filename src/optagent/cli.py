@@ -149,6 +149,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Load gitignored .env (provider keys etc.) before reading os.environ.
+    # Shell-exported vars always win over .env values.
+    from .env_loader import load_dotenv
+
+    load_dotenv()
+
     parser = _build_parser()
     args = parser.parse_args(argv)
 

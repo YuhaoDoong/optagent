@@ -97,7 +97,11 @@ The sidebar exposes:
 - `OPTAGENT_USER_AGENT` — required for the SEC EDGAR adapter (the
   underlying adapter fail-closes without it).
 - `Enable LLM synthesis` + provider picker — auto-detects from
-  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`.
+  `OPENROUTER_API_KEY` (preferred) / `ANTHROPIC_API_KEY` /
+  `OPENAI_API_KEY` / `GEMINI_API_KEY`. Keys can live in a gitignored
+  `.env` at the repo root (copy `.env.example`); shell-exported vars
+  override `.env`. OpenRouter is a multi-model gateway — set
+  `OPENROUTER_MODEL` to any slug (default `anthropic/claude-sonnet-4.6`).
 - `Enable ML direction signal` — first run trains a fresh model (~5s);
   subsequent runs within 7 days hit the cache (~50ms).
 

@@ -182,7 +182,46 @@ def _chat_gemini(
     return str(resp.text or "")
 
 
+def _chat_openrouter(
+    *, system: str, messages: list[dict[str, str]], model: str, max_tokens: int
+) -> str:
+    """OpenRouter is OpenAI-API-compatible; reuse the OpenAI SDK with an
+    overridden base_url + the OPENROUTER_API_KEY. Optional ranking headers
+    (HTTP-Referer / X-Title) are sent when present in env.
+    """
+
+    try:
+        import openai  # noqa: WPS433
+    except ImportError as e:
+        raise RuntimeError("openai SDK not installed (required for OpenRouter)") from e
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+    headers = {}
+    if os.environ.get("OPENROUTER_REFERER"):
+        headers["HTTP-Referer"] = os.environ["OPENROUTER_REFERER"]
+    if os.environ.get("OPENROUTER_TITLE"):
+        headers["X-Title"] = os.environ["OPENROUTER_TITLE"]
+    client = openai.OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        default_headers=headers or None,
+    )
+    full = [{"role": "system", "content": system}] + messages
+    resp = client.chat.completions.create(
+        model=model,
+        messages=full,
+        max_tokens=max_tokens,
+    )
+    return str(resp.choices[0].message.content or "")
+
+
 def _detect_provider() -> str | None:
+    # OpenRouter first: when an OPENROUTER_API_KEY is present the user has
+    # opted into the multi-model gateway, so prefer it over single-vendor keys.
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "openrouter"
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "anthropic"
     if os.environ.get("OPENAI_API_KEY"):
@@ -196,7 +235,12 @@ _DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "claude-opus-4-7",
     "openai": "gpt-4o",
     "gemini": "gemini-1.5-pro",
+    "openrouter": "anthropic/claude-sonnet-4.6",
 }
+
+
+def _openrouter_model() -> str:
+    return os.environ.get("OPENROUTER_MODEL") or _DEFAULT_MODELS["openrouter"]
 
 
 def chat_complete(
@@ -224,7 +268,10 @@ def chat_complete(
         )
     if chosen not in _DEFAULT_MODELS:
         raise RuntimeError(f"unknown provider {chosen!r}")
-    used_model = model or _DEFAULT_MODELS[chosen]
+    if chosen == "openrouter":
+        used_model = model or _openrouter_model()
+    else:
+        used_model = model or _DEFAULT_MODELS[chosen]
 
     system = build_system_prompt(lang, disclaimer)
     ctx_block = build_context_block(context_bundle)
@@ -234,6 +281,8 @@ def chat_complete(
         return _chat_anthropic(system=system, messages=messages, model=used_model, max_tokens=max_tokens)
     if chosen == "openai":
         return _chat_openai(system=system, messages=messages, model=used_model, max_tokens=max_tokens)
+    if chosen == "openrouter":
+        return _chat_openrouter(system=system, messages=messages, model=used_model, max_tokens=max_tokens)
     return _chat_gemini(system=system, messages=messages, model=used_model, max_tokens=max_tokens)
 
 

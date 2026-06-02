@@ -72,7 +72,13 @@ def test_build_messages_context_on_new_message_when_no_history():
 
 
 def test_chat_complete_raises_when_no_provider(monkeypatch):
-    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+    for var in (
+        "OPENROUTER_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+    ):
         monkeypatch.delenv(var, raising=False)
     with pytest.raises(RuntimeError) as ei:
         chat_complete(

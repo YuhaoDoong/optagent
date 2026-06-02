@@ -20,6 +20,13 @@ from typing import Any
 
 import streamlit as st
 
+# Pull provider keys (e.g. OPENROUTER_API_KEY) from a gitignored .env so the
+# UI can synthesise / chat without the user exporting them by hand. Shell env
+# always wins over .env (see env_loader.load_dotenv).
+from optagent.env_loader import load_dotenv as _load_dotenv
+
+_load_dotenv()
+
 from optagent import DISCLAIMER, __version__
 from optagent.web.chat import (
     ChatMessage,
@@ -150,7 +157,7 @@ def _sidebar() -> dict[str, Any]:
     auto_label = t("sidebar.auto_detect", lang)
     provider = st.sidebar.selectbox(
         t("sidebar.provider", lang),
-        options=(auto_label, "anthropic", "openai", "gemini"),
+        options=(auto_label, "openrouter", "anthropic", "openai", "gemini"),
         index=0,
         disabled=not enable_llm,
     )

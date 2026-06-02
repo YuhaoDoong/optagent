@@ -514,7 +514,13 @@ def make_openai_client(api_key: str | None = None, model: str = "gpt-4o"):
             "OpenAI SDK not installed; install with `pip install openai` or use --provider anthropic."
         ) from e
 
-    sdk_client = openai.OpenAI(api_key=api_key) if api_key else openai.OpenAI()
+    try:
+        sdk_client = openai.OpenAI(api_key=api_key) if api_key else openai.OpenAI()
+    except openai.OpenAIError as e:
+        raise RuntimeError(
+            "OpenAI client could not be constructed (missing OPENAI_API_KEY?). "
+            "Set the key, pass --provider openrouter, or run template_only mode."
+        ) from e
 
     class _OpenAIClient:
         def synthesise(
@@ -556,6 +562,81 @@ def make_openai_client(api_key: str | None = None, model: str = "gpt-4o"):
             return tool_input, {"finish_reason": choice.finish_reason}
 
     return _OpenAIClient()
+
+
+def make_openrouter_client(api_key: str | None = None, model: str = "anthropic/claude-sonnet-4.6"):
+    """OpenRouter backend — OpenAI-compatible Chat Completions with function
+    calling, talking to ``https://openrouter.ai/api/v1``.
+
+    The OCC anti-hallucination contract is identical to the OpenAI path: the
+    LLM may only return the `emit_verdict` tool input; every canonical numeric
+    is copied from the screener row by `build_verdict_from_tool_input`.
+    """
+
+    import os
+
+    try:
+        import openai  # noqa: WPS433
+    except ImportError as e:
+        raise RuntimeError(
+            "OpenAI SDK not installed (required for OpenRouter); install with "
+            "`pip install openai`."
+        ) from e
+
+    key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY not set.")
+    headers = {}
+    if os.environ.get("OPENROUTER_REFERER"):
+        headers["HTTP-Referer"] = os.environ["OPENROUTER_REFERER"]
+    if os.environ.get("OPENROUTER_TITLE"):
+        headers["X-Title"] = os.environ["OPENROUTER_TITLE"]
+    sdk_client = openai.OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=key,
+        default_headers=headers or None,
+    )
+
+    class _OpenRouterClient:
+        def synthesise(
+            self,
+            *,
+            system: str,
+            user_prompt: str,
+            tool: dict,
+            max_output_tokens: int,
+            timeout_s: int,
+        ) -> tuple[dict, dict]:
+            import json
+
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["input_schema"],
+                },
+            }
+            resp = sdk_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                tools=[openai_tool],
+                tool_choice={"type": "function", "function": {"name": tool["name"]}},
+                max_tokens=max_output_tokens,
+                timeout=timeout_s,
+            )
+            choice = resp.choices[0]
+            tcs = choice.message.tool_calls or []
+            if not tcs:
+                raise RuntimeError("OpenRouter response did not include a tool call.")
+            args_raw = tcs[0].function.arguments
+            tool_input = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            return tool_input, {"finish_reason": choice.finish_reason}
+
+    return _OpenRouterClient()
 
 
 def make_gemini_client(api_key: str | None = None, model: str = "gemini-1.5-pro"):
@@ -643,7 +724,9 @@ def make_client_from_env(provider: str | None = None, model: str | None = None):
 
     chosen = (provider or os.environ.get("OPTAGENT_LLM_PROVIDER", "")).lower().strip()
     if not chosen:
-        if os.environ.get("ANTHROPIC_API_KEY"):
+        if os.environ.get("OPENROUTER_API_KEY"):
+            chosen = "openrouter"
+        elif os.environ.get("ANTHROPIC_API_KEY"):
             chosen = "anthropic"
         elif os.environ.get("OPENAI_API_KEY"):
             chosen = "openai"
@@ -651,8 +734,8 @@ def make_client_from_env(provider: str | None = None, model: str | None = None):
             chosen = "gemini"
         else:
             raise RuntimeError(
-                "No LLM provider configured. Set ANTHROPIC_API_KEY / OPENAI_API_KEY / "
-                "GEMINI_API_KEY, or pass --provider explicitly."
+                "No LLM provider configured. Set OPENROUTER_API_KEY / ANTHROPIC_API_KEY / "
+                "OPENAI_API_KEY / GEMINI_API_KEY, or pass --provider explicitly."
             )
 
     if chosen == "anthropic":
@@ -661,4 +744,9 @@ def make_client_from_env(provider: str | None = None, model: str | None = None):
         return make_openai_client(model=model or "gpt-4o"), "openai", (model or "gpt-4o")
     if chosen == "gemini":
         return make_gemini_client(model=model or "gemini-1.5-pro"), "gemini", (model or "gemini-1.5-pro")
-    raise RuntimeError(f"unknown LLM provider {chosen!r}; expected anthropic|openai|gemini")
+    if chosen == "openrouter":
+        or_model = model or os.environ.get("OPENROUTER_MODEL") or "anthropic/claude-sonnet-4.6"
+        return make_openrouter_client(model=or_model), "openrouter", or_model
+    raise RuntimeError(
+        f"unknown LLM provider {chosen!r}; expected anthropic|openai|gemini|openrouter"
+    )

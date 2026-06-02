@@ -21,6 +21,7 @@ adapters = [
 llm = [
     "anthropic>=0.40,<1",
     "tiktoken>=0.7,<1",
+    "openai>=1.40",  # also used for OpenRouter (OpenAI-compatible gateway)
 ]
 ui = [
     "streamlit>=1.30,<2",
