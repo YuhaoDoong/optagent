@@ -153,7 +153,7 @@ def _sidebar() -> dict[str, Any]:
     )
 
     st.sidebar.subheader(t("sidebar.llm_header", lang))
-    enable_llm = st.sidebar.checkbox(t("sidebar.enable_llm", lang), value=False)
+    enable_llm = st.sidebar.checkbox(t("sidebar.enable_llm", lang), value=True)
     auto_label = t("sidebar.auto_detect", lang)
     provider = st.sidebar.selectbox(
         t("sidebar.provider", lang),
@@ -396,10 +396,11 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
 
 
 def _render_ml_gauge(ml_signal: dict[str, Any]) -> None:
+    lang = _current_lang()
     info = ml_signal_gauge(ml_signal)
     if not info.get("available"):
         return
-    st.subheader("ML direction signal")
+    st.subheader(t("ml.gauge_title", lang))
     import plotly.graph_objects as go
 
     fig = go.Figure(
@@ -430,7 +431,7 @@ def _render_ml_gauge(ml_signal: dict[str, Any]) -> None:
 
     snap_df = feature_radar(info.get("feature_snapshot") or {})
     if not snap_df.empty:
-        with st.expander("Feature snapshot"):
+        with st.expander(t("ml.feature_snapshot", lang)):
             st.dataframe(snap_df, use_container_width=True, hide_index=True)
 
 
@@ -438,28 +439,25 @@ def _render_ml_gauge(ml_signal: dict[str, Any]) -> None:
 # Tab 2: Cross-ticker screen
 
 
-def _tab_screen() -> None:
-    st.header("🔭 Cross-ticker screen")
-    st.caption(
-        "Equivalent to `optagent screen --strategy ... --sector ...`. The "
-        "framework runs a quant strategy across the universe and ranks the "
-        "top candidates by score."
-    )
+def _tab_screen(lang: str = "en") -> None:
+    st.header(t("screen.header", lang))
+    st.caption(t("screen.caption", lang))
 
     from optagent.strategies import list_sectors, list_strategy_ids
 
+    sector_any = t("screen.sector_any", lang)
     col1, col2, col3 = st.columns(3)
     with col1:
-        strategy_id = st.selectbox("Strategy", options=list_strategy_ids())
+        strategy_id = st.selectbox(t("screen.strategy_label", lang), options=list_strategy_ids())
     with col2:
         sector = st.selectbox(
-            "Sector (optional)",
-            options=["(any)"] + list_sectors(),
+            t("screen.sector_label", lang),
+            options=[sector_any] + list_sectors(),
         )
     with col3:
-        limit = st.number_input("Top N", min_value=1, max_value=20, value=5)
+        limit = st.number_input(t("screen.limit_label", lang), min_value=1, max_value=20, value=5)
 
-    if not st.button("Run screen", type="primary"):
+    if not st.button(t("screen.run_btn", lang), type="primary"):
         return
 
     from optagent.strategies import (
@@ -470,35 +468,32 @@ def _tab_screen() -> None:
     )
 
     universe = builtin_us_large_cap()
-    if sector != "(any)":
+    if sector != sector_any:
         universe = filter_to_sector(universe, sector)
         if not universe:
-            st.warning(f"Sector '{sector}' has no overlap with the built-in universe.")
+            st.warning(t("screen.sector_empty_warning", lang, sector=sector))
             return
 
     strategy = get_strategy(strategy_id)
-    with st.spinner(f"Running {strategy_id} across {len(universe)} tickers..."):
+    with st.spinner(t("screen.spinner", lang, strategy=strategy_id, n=len(universe))):
         result = screen_universe(strategy, universe, top_n=int(limit))
 
     col_l, col_r = st.columns(3)
-    col_l.metric("Universe size", result.universe_size)
-    col_l.metric("Evaluated", result.n_evaluated)
-    col_r.metric("Triggered", result.n_triggered, delta=None)
-    col_r.metric("Top near-misses", len(result.top_near_misses))
+    col_l.metric(t("screen.metric_universe", lang), result.universe_size)
+    col_l.metric(t("screen.metric_evaluated", lang), result.n_evaluated)
+    col_r.metric(t("screen.metric_triggered", lang), result.n_triggered, delta=None)
+    col_r.metric(t("screen.metric_near_misses", lang), len(result.top_near_misses))
 
     if result.stale_bars:
-        st.warning(
-            f"{len(result.stale_bars)} ticker(s) had stale OHLCV bars (US market "
-            "holidays / long weekends). They were still evaluated; verify before action."
-        )
-        with st.expander("Stale-bar details"):
+        st.warning(t("screen.stale_warning", lang, n=len(result.stale_bars)))
+        with st.expander(t("screen.stale_details", lang)):
             stale_df = pd.DataFrame(
                 result.stale_bars, columns=["ticker", "last_bar", "trading_days_behind"]
             )
             st.dataframe(stale_df, use_container_width=True, hide_index=True)
 
     if result.top_signals:
-        st.subheader("Top candidates")
+        st.subheader(t("screen.top_candidates", lang))
         df = strategy_signal_table(result.top_signals)
         st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -509,10 +504,10 @@ def _tab_screen() -> None:
         fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No tickers triggered the strategy.")
+        st.info(t("screen.no_trigger", lang))
 
     if result.top_near_misses:
-        with st.expander(f"Near-misses ({len(result.top_near_misses)})"):
+        with st.expander(t("screen.near_misses_expander", lang, n=len(result.top_near_misses))):
             nm_df = strategy_signal_table(result.top_near_misses)
             st.dataframe(nm_df, use_container_width=True, hide_index=True)
 
@@ -521,26 +516,23 @@ def _tab_screen() -> None:
 # Tab 3: ML direction model
 
 
-def _tab_ml() -> None:
-    st.header("🧠 ML direction model")
-    st.caption(
-        "Per-ticker `GradientBoostingClassifier` with walk-forward OOS validation, "
-        "Wilson 95% CI, and class-baseline comparison. Output is INFORMATIONAL — the "
-        "fail-closed validator does not let it become the sole reason for a non-SKIP "
-        "verdict."
-    )
+def _tab_ml(lang: str = "en") -> None:
+    st.header(t("ml.header", lang))
+    st.caption(t("ml.caption", lang))
 
-    ticker = st.text_input("Ticker", value="AAPL", max_chars=10, key="ml_ticker").upper().strip()
-    if not st.button("Compute signal", type="primary", key="ml_run"):
+    ticker = st.text_input(
+        t("ml.ticker_label", lang), value="AAPL", max_chars=10, key="ml_ticker"
+    ).upper().strip()
+    if not st.button(t("ml.run_btn", lang), type="primary", key="ml_run"):
         return
 
     from optagent.ml import MLDirectionAdapter
 
-    with st.spinner(f"Training / loading model for {ticker}..."):
+    with st.spinner(t("ml.spinner", lang, ticker=ticker)):
         adapter = MLDirectionAdapter()
         sig = adapter.signal(ticker)
     if sig is None:
-        st.error("ML signal unavailable (no yfinance history or invalid ticker).")
+        st.error(t("ml.unavailable", lang))
         return
     _render_ml_gauge(sig.to_dict())
 
@@ -549,18 +541,15 @@ def _tab_ml() -> None:
 # Entry point
 
 
-def _tab_ledger() -> None:
-    st.header("📒 Audit ledger viewer")
-    st.caption(
-        "Browse recent runs persisted to `data/ledger/YYYY-MM-DD.jsonl`. Useful "
-        "for post-hoc inspection without re-running."
-    )
+def _tab_ledger(lang: str = "en") -> None:
+    st.header(t("ledger.header", lang))
+    st.caption(t("ledger.caption", lang))
     col1, col2 = st.columns([1, 1])
     with col1:
-        days_back = st.slider("Days back", min_value=1, max_value=30, value=7)
+        days_back = st.slider(t("ledger.days_back_label", lang), min_value=1, max_value=30, value=7)
     with col2:
         ledger_dir = st.text_input(
-            "Ledger directory", value="data/ledger",
+            t("ledger.dir_label", lang), value="data/ledger",
             help="Override if you ran with --ledger-dir.",
         )
 
@@ -568,13 +557,10 @@ def _tab_ledger() -> None:
 
     df = ledger_index(_P(ledger_dir), days_back=int(days_back))
     if df.empty:
-        st.info(
-            "No ledger rows found. Run `optagent analyze <ticker>` (CLI or this UI) "
-            "to populate the ledger."
-        )
+        st.info(t("ledger.empty", lang))
         return
 
-    st.markdown(f"**{len(df)}** recent runs found.")
+    st.markdown(t("ledger.count", lang, n=len(df)))
     st.dataframe(df, use_container_width=True, hide_index=True)
 
     # Verdict distribution pie chart.
@@ -584,7 +570,7 @@ def _tab_ledger() -> None:
     if not counts.empty:
         fig = px.pie(counts, names="action", values="count", height=320)
         fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
-        st.subheader("Verdict distribution")
+        st.subheader(t("ledger.pie_title", lang))
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -662,11 +648,11 @@ def main() -> None:
     with tabs[0]:
         _tab_analyze(opts)
     with tabs[1]:
-        _tab_screen()
+        _tab_screen(lang)
     with tabs[2]:
-        _tab_ml()
+        _tab_ml(lang)
     with tabs[3]:
-        _tab_ledger()
+        _tab_ledger(lang)
     with tabs[4]:
         _tab_chat(opts)
 

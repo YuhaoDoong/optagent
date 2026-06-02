@@ -102,6 +102,8 @@ _TABLE: dict[str, dict[str, str]] = {
         "zh": "{n} 只股票的 OHLCV 数据过期（美国市场假期 / 长周末），仍参与了评估，请人工确认后再行动。",
     },
     "screen.top_candidates": {"en": "Top candidates", "zh": "前 N 候选"},
+    "screen.stale_details": {"en": "Stale-bar details", "zh": "数据过期明细"},
+    "screen.score_chart": {"en": "Scores", "zh": "得分"},
     "screen.no_trigger": {"en": "No tickers triggered the strategy.", "zh": "没有股票触发该策略。"},
     "screen.near_misses_expander": {"en": "Near-misses ({n})", "zh": "差一点触发的候选（{n} 个）"},
     "screen.sector_empty_warning": {
@@ -116,11 +118,14 @@ _TABLE: dict[str, dict[str, str]] = {
         "zh": "每只股票一个 `GradientBoostingClassifier`，含 walk-forward 样本外验证、Wilson 95% 置信区间、与基线类别准确率对比。结果仅供参考——失败闭合验证器不允许它单独成为非 SKIP verdict 的主要依据。",
     },
     "ml.run_btn": {"en": "Compute signal", "zh": "计算信号"},
+    "ml.ticker_label": {"en": "Ticker", "zh": "股票代码"},
     "ml.spinner": {"en": "Training / loading model for {ticker}...", "zh": "正在训练/加载 {ticker} 的模型……"},
     "ml.unavailable": {
         "en": "ML signal unavailable (no yfinance history or invalid ticker).",
         "zh": "ML 信号不可用（缺少 yfinance 历史数据或股票代码无效）。",
     },
+    "ml.gauge_title": {"en": "ML direction signal", "zh": "ML 方向信号"},
+    "ml.feature_snapshot": {"en": "Feature snapshot", "zh": "特征快照"},
 
     # Ledger tab
     "ledger.header": {"en": "📒 Audit ledger viewer", "zh": "📒 审计账本浏览器"},
