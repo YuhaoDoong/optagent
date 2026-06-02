@@ -45,6 +45,23 @@ def test_snapshot_context_block_is_bounded():
     assert len(block) < 9000  # _CONTEXT_CAP (8000) + wrapper, well under the raw 50k
 
 
+def test_snapshot_context_block_includes_freshness_and_stale_summary():
+    # A completed (possibly old/partially-stale) screen explained later must
+    # disclose computed_at + stale + the affected tickers, even if those rows
+    # fall outside the capped per-strategy signal detail.
+    snap = {
+        "computed_at": "2026-06-02T01:23:45", "stale": True,
+        "strategies": {
+            "s1": {"n_triggered": 9, "stale_tickers": ["TSLA", "NVDA"],
+                   "signals": [{"ticker": f"T{i}", "score": 1.0} for i in range(9)]},
+        },
+    }
+    block = build_snapshot_context_block(snap)
+    assert "computed_at=2026-06-02T01:23:45" in block
+    assert "stale=True" in block
+    assert "TSLA" in block and "NVDA" in block
+
+
 def test_snapshot_context_block_represents_every_strategy():
     # 5 strategies, 10 verbose signals each: every strategy id must still appear
     # in the bounded explanation context (no late strategy truncated away).

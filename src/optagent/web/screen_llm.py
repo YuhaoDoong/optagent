@@ -76,6 +76,25 @@ def build_snapshot_context_block(screen_snapshot: Mapping[str, Any] | None) -> s
     snap = _as_mapping(screen_snapshot)
     sections: list[tuple[str, list[str]]] = []
 
+    strategies = _as_mapping(snap.get("strategies"))
+    # Freshness / stale metadata FIRST so the LLM can disclose an old or
+    # partially-stale screen even if the stale rows fall outside the capped
+    # per-strategy signal detail below.
+    meta = [
+        f"computed_at={escape_untrusted(snap.get('computed_at'))} "
+        f"stale={escape_untrusted(snap.get('stale'))}"
+    ]
+    all_stale = sorted({
+        t
+        for sres in strategies.values()
+        for t in _compact_seq(_field(sres, "stale_tickers"), 1000)
+    })
+    if all_stale:
+        meta.append(
+            "stale_tickers: " + ",".join(escape_untrusted(t) for t in all_stale[:20])
+        )
+    sections.append(("## Screen metadata", meta))
+
     syn = _compact_seq(snap.get("synthesis"), 10)
     if syn:
         sections.append((
@@ -90,7 +109,6 @@ def build_snapshot_context_block(screen_snapshot: Mapping[str, Any] | None) -> s
             ],
         ))
 
-    strategies = _as_mapping(snap.get("strategies"))
     for sid, sres in strategies.items():
         body: list[str] = []
         if _field(sres, "error"):

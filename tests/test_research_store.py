@@ -465,6 +465,29 @@ def test_build_context_preserves_all_sections_under_truncation():
     assert "## ML direction signal" in ctx
 
 
+def test_build_context_renders_selected_contract_and_citations():
+    # A non-SKIP verdict whose chosen OCC is OUTSIDE the first 3 candidates and
+    # whose cited envelope is outside the first 6 sources must still appear.
+    candidates = [{"occ_symbol": f"PAD{i}", "strike": 1.0} for i in range(5)]
+    sources = [{"tool_call_id": f"src{i}", "source": "yfinance"} for i in range(8)]
+    verdict = {
+        "action": "LONG_CALL", "skip_reason": None, "conviction": 0.7,
+        "contract": {"occ_symbol": "AAPL_C200", "right": "call", "strike": 200.0,
+                     "mid": 2.5, "breakeven": 202.5, "max_loss": 250.0},
+        "primary_reasons": ["catalyst"], "dissenting_factors": ["short DTE theta"],
+        "citations": [{"tool_call_id": "tc-deep", "provider_profile_id": "p"}],
+    }
+    store = rs.init_store()
+    store["analysis"]["AAPL"] = rs.analysis_snapshot(
+        "AAPL", verdict, candidates, "t",
+        envelopes=sources,
+    )
+    ctx = rs.build_context(store, "en")
+    assert "chosen: AAPL_C200" in ctx          # selected contract present
+    assert "dissenting: short DTE theta" in ctx
+    assert "tc-deep" in ctx                     # cited envelope id present
+
+
 def test_build_context_includes_envelope_as_of():
     store = rs.init_store()
     store["analysis"]["AAPL"] = rs.analysis_snapshot(

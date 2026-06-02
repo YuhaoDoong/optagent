@@ -729,6 +729,33 @@ def build_context(
                 analysis_body.append(
                     f"      reasons: {'; '.join(escape_untrusted(r) for r in reasons)}"
                 )
+            # The SELECTED contract + cited evidence are rendered BEFORE the
+            # capped candidate/source loops, so a non-SKIP verdict's chosen OCC
+            # and citations are never lost when they fall outside those caps.
+            chosen = v.get("contract")
+            if isinstance(chosen, Mapping):
+                analysis_body.append(
+                    f"      chosen: {escape_untrusted(_field(chosen, 'occ_symbol'))} "
+                    f"{escape_untrusted(_field(chosen, 'right'))} "
+                    f"K={escape_untrusted(_field(chosen, 'strike'))} "
+                    f"mid={escape_untrusted(_field(chosen, 'mid'))} "
+                    f"BE={escape_untrusted(_field(chosen, 'breakeven'))} "
+                    f"maxloss={escape_untrusted(_field(chosen, 'max_loss'))}"
+                )
+            diss = _compact_seq(v.get("dissenting_factors"), 2)
+            if diss:
+                analysis_body.append(
+                    f"      dissenting: {'; '.join(escape_untrusted(d) for d in diss)}"
+                )
+            cites = [
+                _field(c, "tool_call_id")
+                for c in _compact_seq(v.get("citations"), 12)
+                if _field(c, "tool_call_id")
+            ]
+            if cites:
+                analysis_body.append(
+                    f"      cited: [{','.join(escape_untrusted(x) for x in cites)}]"
+                )
             for c in (snap.get("candidates") or [])[:3]:
                 analysis_body.append(
                     f"      {escape_untrusted(_field(c, 'occ_symbol'))} "
