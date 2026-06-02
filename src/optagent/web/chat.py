@@ -253,8 +253,14 @@ def chat_complete(
     model: str | None = None,
     max_tokens: int = 1024,
     disclaimer: str = "RESEARCH ONLY — NOT FINANCIAL ADVICE.",
+    context_block: str | None = None,
 ) -> str:
     """Run one chat turn; return the assistant's plain-text reply.
+
+    `context_block`, when provided, is used verbatim as the grounding block
+    (already-wrapped `<analysis_context>` text) instead of JSON-serializing
+    `context_bundle`. This lets callers supply a richer, escaped, truncated
+    grounding context (see web/research_store.build_context).
 
     Raises RuntimeError when no provider key is available or the chosen
     provider's SDK is missing.
@@ -274,7 +280,7 @@ def chat_complete(
         used_model = model or _DEFAULT_MODELS[chosen]
 
     system = build_system_prompt(lang, disclaimer)
-    ctx_block = build_context_block(context_bundle)
+    ctx_block = context_block if context_block is not None else build_context_block(context_bundle)
     messages = build_messages(history, user_message, ctx_block)
 
     if chosen == "anthropic":

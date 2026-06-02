@@ -31,7 +31,6 @@ from optagent import DISCLAIMER, __version__
 from optagent.web.chat import (
     ChatMessage,
     chat_complete,
-    summarise_analysis_for_context,
 )
 from optagent.web.components import (
     candidate_table,
@@ -44,7 +43,51 @@ from optagent.web.components import (
     strategy_signal_table,
     verdict_badge,
 )
+from optagent.web import research_store as rs
 from optagent.web.i18n import supported_languages, t
+
+
+# Ordered main views (replaces st.tabs so drill-down can navigate
+# programmatically — st.tabs cannot be switched from code). Market screen
+# is intentionally first.
+_VIEWS: tuple[str, ...] = ("screen", "analyze", "ml", "ledger")
+_VIEW_LABEL_KEY = {
+    "screen": "tab.screen",
+    "analyze": "tab.analyze",
+    "ml": "tab.ml",
+    "ledger": "tab.ledger",
+}
+
+
+def _store() -> dict[str, Any]:
+    """Get-or-init the per-session research store."""
+
+    if "research_store" not in st.session_state:
+        st.session_state["research_store"] = rs.init_store()
+    return st.session_state["research_store"]
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _consume_drilldown(target: str) -> str | None:
+    """If a one-shot drill-down is pending for `target`, claim its ticker once.
+
+    Returns the ticker (and clears the marker) on the first render after a
+    drill-down click; returns None on subsequent reruns so the auto-run fires
+    exactly once.
+    """
+
+    pending = st.session_state.get("pending_drilldown")
+    if pending and pending.get("target") == target and pending.get("ticker"):
+        ticker = str(pending["ticker"]).upper()
+        st.session_state["active_ticker"] = ticker
+        st.session_state["pending_drilldown"] = None  # consume once
+        return ticker
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +229,19 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     st.header(t("analyze.header", lang))
     st.caption(t("analyze.caption", lang))
 
+    # A drill-down from the screen view prefills + auto-runs once.
+    auto_ticker = _consume_drilldown("analyze")
+    if auto_ticker:
+        st.session_state["analyze_ticker"] = auto_ticker
+        st.info(t("drill.autorun_note", lang, ticker=auto_ticker))
+    elif "analyze_ticker" not in st.session_state:
+        st.session_state["analyze_ticker"] = st.session_state.get("active_ticker") or "AAPL"
+
     col_l, col_r = st.columns([2, 1])
     with col_l:
-        ticker = st.text_input(t("analyze.ticker_label", lang), value="AAPL", max_chars=10).upper().strip()
+        ticker = st.text_input(
+            t("analyze.ticker_label", lang), max_chars=10, key="analyze_ticker"
+        ).upper().strip()
     with col_r:
         horizon = st.number_input(t("analyze.horizon_label", lang), min_value=1, max_value=120, value=14)
 
@@ -197,7 +250,7 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     )
     max_loss_v = max_loss if max_loss > 0 else None
 
-    if not st.button(t("analyze.run_btn", lang), type="primary"):
+    if not (st.button(t("analyze.run_btn", lang), type="primary") or auto_ticker):
         return
 
     # Codex web-audit fix: DO NOT write sidebar secrets to os.environ.
@@ -282,13 +335,21 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     if moomoo_adapter is not None:
         moomoo_adapter.close()
 
-    # Stash analysis context for the chat tab. summarise_analysis_for_context
-    # picks a compact subset (no Streamlit-incompatible types) so it survives
-    # the session_state pickle/hash round-trip cleanly.
-    from datetime import datetime as _dt
-    st.session_state["last_analysis_summary"] = summarise_analysis_for_context(result)
-    st.session_state["last_analysis_ticker"] = ticker
-    st.session_state["last_analysis_ts"] = _dt.utcnow().isoformat(timespec="seconds")
+    # Write a normalized analysis snapshot into the research store so the chat
+    # panel can ground on it (compact, JSON-serializable — not rendered markup).
+    verdict_dump = (
+        result.verdict.model_dump(mode="json") if result.verdict is not None else None
+    )
+    cand_dumps = [
+        c.model_dump(mode="json") for c in (result.screener_candidates or [])
+    ]
+    store = _store()
+    store["analysis"][ticker] = rs.analysis_snapshot(
+        ticker, verdict_dump, cand_dumps, _now_iso()
+    )
+    if result.ml_signal:
+        store["ml"][ticker] = rs.ml_snapshot(ticker, dict(result.ml_signal), _now_iso())
+    store["active_ticker"] = ticker
 
     _verdict_card(verdict_badge(result.verdict))
     if result.verdict.primary_reasons:
@@ -439,26 +500,16 @@ def _render_ml_gauge(ml_signal: dict[str, Any]) -> None:
 # Tab 2: Cross-ticker screen
 
 
-def _tab_screen(lang: str = "en") -> None:
-    st.header(t("screen.header", lang))
-    st.caption(t("screen.caption", lang))
+def _signal_to_dict(sig: Any) -> dict[str, Any]:
+    return sig.to_dict() if hasattr(sig, "to_dict") else dict(sig)
 
-    from optagent.strategies import list_sectors, list_strategy_ids
 
-    sector_any = t("screen.sector_any", lang)
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        strategy_id = st.selectbox(t("screen.strategy_label", lang), options=list_strategy_ids())
-    with col2:
-        sector = st.selectbox(
-            t("screen.sector_label", lang),
-            options=[sector_any] + list_sectors(),
-        )
-    with col3:
-        limit = st.number_input(t("screen.limit_label", lang), min_value=1, max_value=20, value=5)
+def _run_multi_strategy(strategy_ids: list[str], sector: str, sector_any: str, limit: int):
+    """Run each strategy sequentially with per-strategy error isolation.
 
-    if not st.button(t("screen.run_btn", lang), type="primary"):
-        return
+    Returns results_by_strategy: {sid: {signals, n_triggered, n_evaluated,
+    stale_tickers, error}}. One strategy raising never aborts the others.
+    """
 
     from optagent.strategies import (
         builtin_us_large_cap,
@@ -470,46 +521,144 @@ def _tab_screen(lang: str = "en") -> None:
     universe = builtin_us_large_cap()
     if sector != sector_any:
         universe = filter_to_sector(universe, sector)
-        if not universe:
-            st.warning(t("screen.sector_empty_warning", lang, sector=sector))
-            return
 
-    strategy = get_strategy(strategy_id)
-    with st.spinner(t("screen.spinner", lang, strategy=strategy_id, n=len(universe))):
-        result = screen_universe(strategy, universe, top_n=int(limit))
+    results: dict[str, dict[str, Any]] = {}
+    for sid in strategy_ids:  # deterministic: preserves selection order
+        try:
+            if not universe:
+                results[sid] = {"error": "empty_universe", "signals": []}
+                continue
+            strategy = get_strategy(sid)
+            res = screen_universe(strategy, universe, top_n=int(limit))
+            results[sid] = {
+                "error": None,
+                "signals": [_signal_to_dict(s) for s in res.top_signals],
+                "n_triggered": res.n_triggered,
+                "n_evaluated": res.n_evaluated,
+                "stale_tickers": [tk for (tk, _d, _n) in res.stale_bars],
+                "near_misses": [_signal_to_dict(s) for s in res.top_near_misses],
+            }
+        except Exception as e:  # noqa: BLE001 — isolate one strategy's failure
+            results[sid] = {"error": f"{type(e).__name__}: {e}", "signals": []}
+    return results
 
-    col_l, col_r = st.columns(2)
-    col_l.metric(t("screen.metric_universe", lang), result.universe_size)
-    col_l.metric(t("screen.metric_evaluated", lang), result.n_evaluated)
-    col_r.metric(t("screen.metric_triggered", lang), result.n_triggered, delta=None)
-    col_r.metric(t("screen.metric_near_misses", lang), len(result.top_near_misses))
 
-    if result.stale_bars:
-        st.warning(t("screen.stale_warning", lang, n=len(result.stale_bars)))
-        with st.expander(t("screen.stale_details", lang)):
-            stale_df = pd.DataFrame(
-                result.stale_bars, columns=["ticker", "last_bar", "trading_days_behind"]
-            )
-            st.dataframe(stale_df, use_container_width=True, hide_index=True)
+def _tab_screen(lang: str = "en") -> None:
+    st.header(t("screen.header", lang))
+    st.caption(t("screen.caption", lang))
 
-    if result.top_signals:
-        st.subheader(t("screen.top_candidates", lang))
-        df = strategy_signal_table(result.top_signals)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    from optagent.strategies import list_sectors, list_strategy_ids
 
-        # Bar chart of scores.
-        import plotly.express as px
+    sector_any = t("screen.sector_any", lang)
+    all_strategies = list_strategy_ids()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        strategy_ids = st.multiselect(
+            t("screen.multiselect_label", lang),
+            options=all_strategies,
+            default=all_strategies[:1],
+        )
+    with col2:
+        sector = st.selectbox(t("screen.sector_label", lang), options=[sector_any] + list_sectors())
+    with col3:
+        limit = st.number_input(t("screen.limit_label", lang), min_value=1, max_value=20, value=5)
 
-        fig = px.bar(df, x="Ticker", y="Score", color="Direction", height=300)
-        fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+    if st.button(t("screen.run_btn", lang), type="primary"):
+        if not strategy_ids:
+            st.warning(t("screen.select_prompt", lang))
+        else:
+            with st.spinner(t("screen.spinner", lang, strategy=", ".join(strategy_ids), n=85)):
+                results = _run_multi_strategy(strategy_ids, sector, sector_any, int(limit))
+            synthesis = rs.synthesise_cross_strategy(results, top_n=int(limit))
+            # Persist so reruns (e.g. the Explain button) keep the data, and the
+            # chat panel can ground on it.
+            st.session_state["last_screen"] = {"results": results, "synthesis": synthesis}
+            _store()["screen"] = rs.screen_snapshot(results, synthesis, _now_iso())
+
+    snap = st.session_state.get("last_screen")
+    if not snap:
+        return
+    results = snap["results"]
+    synthesis = snap["synthesis"]
+
+    # --- Cross-strategy synthesis (deterministic ranking) ---
+    st.subheader(t("screen.synthesis_title", lang))
+    st.caption(t("screen.synthesis_caption", lang))
+    if not synthesis:
+        st.info(t("screen.no_synthesis", lang))
     else:
-        st.info(t("screen.no_trigger", lang))
+        syn_df = pd.DataFrame(
+            [
+                {
+                    "Ticker": p["ticker"],
+                    t("screen.col_resonance", lang): p["resonance"],
+                    t("screen.col_score", lang): p["combined_score"],
+                    t("screen.col_support", lang): ", ".join(p["supporting"]),
+                }
+                for p in synthesis
+            ]
+        )
+        st.dataframe(syn_df, use_container_width=True, hide_index=True)
 
-    if result.top_near_misses:
-        with st.expander(t("screen.near_misses_expander", lang, n=len(result.top_near_misses))):
-            nm_df = strategy_signal_table(result.top_near_misses)
-            st.dataframe(nm_df, use_container_width=True, hide_index=True)
+        # One-click drill-down per pick.
+        for p in synthesis:
+            tk = p["ticker"]
+            c0, c1, c2 = st.columns([2, 1, 1])
+            c0.markdown(f"**{tk}** · {t('screen.col_resonance', lang)}={p['resonance']}")
+            if c1.button(t("screen.drill_analyze", lang), key=f"drill_an_{tk}"):
+                _drilldown(tk, "analyze")
+            if c2.button(t("screen.drill_ml", lang), key=f"drill_ml_{tk}"):
+                _drilldown(tk, "ml")
+
+        # Opt-in LLM explanation.
+        if st.button(t("screen.explain_btn", lang), key="explain_screen_btn"):
+            try:
+                from optagent.web.screen_llm import explain_screen
+
+                with st.spinner(t("screen.explain_spinner", lang)):
+                    prose = explain_screen(
+                        _store().get("screen"),
+                        lang=lang,
+                        provider=st.session_state.get("provider_override"),
+                    )
+                st.subheader(t("screen.explain_title", lang))
+                st.markdown(prose)
+            except RuntimeError as e:
+                if "No LLM provider configured" in str(e):
+                    st.error(t("chat.no_llm", lang))
+                else:
+                    st.error(t("chat.error", lang, err=str(e)))
+
+    # --- Per-strategy result tables ---
+    st.subheader(t("screen.per_strategy_title", lang))
+    for sid, res in results.items():
+        with st.expander(f"{sid}", expanded=len(results) == 1):
+            if res.get("error"):
+                st.error(t("screen.strategy_error", lang, sid=sid, err=res["error"]))
+                continue
+            st.caption(
+                t("screen.metric_triggered", lang) + f": {res.get('n_triggered')}    "
+                + t("screen.metric_evaluated", lang) + f": {res.get('n_evaluated')}"
+            )
+            sigs = res.get("signals") or []
+            if sigs:
+                st.dataframe(strategy_signal_table(sigs), use_container_width=True, hide_index=True)
+            else:
+                st.info(t("screen.no_trigger", lang))
+
+
+def _drilldown(ticker: str, target: str) -> None:
+    """Queue a one-shot drill-down and navigate to the target view.
+
+    Sets only plain session vars (not the radio's widget key) plus a `nav_to`
+    marker that `_view_selector` applies before the radio instantiates next
+    run. Avoids the "modify widget value after instantiation" error.
+    """
+
+    st.session_state["active_ticker"] = ticker.upper()
+    st.session_state["pending_drilldown"] = {"ticker": ticker.upper(), "target": target}
+    st.session_state["nav_to"] = target
+    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -520,10 +669,17 @@ def _tab_ml(lang: str = "en") -> None:
     st.header(t("ml.header", lang))
     st.caption(t("ml.caption", lang))
 
+    auto_ticker = _consume_drilldown("ml")
+    if auto_ticker:
+        st.session_state["ml_ticker"] = auto_ticker
+        st.info(t("drill.autorun_note", lang, ticker=auto_ticker))
+    elif "ml_ticker" not in st.session_state:
+        st.session_state["ml_ticker"] = st.session_state.get("active_ticker") or "AAPL"
+
     ticker = st.text_input(
-        t("ml.ticker_label", lang), value="AAPL", max_chars=10, key="ml_ticker"
+        t("ml.ticker_label", lang), max_chars=10, key="ml_ticker"
     ).upper().strip()
-    if not st.button(t("ml.run_btn", lang), type="primary", key="ml_run"):
+    if not (st.button(t("ml.run_btn", lang), type="primary", key="ml_run") or auto_ticker):
         return
 
     from optagent.ml import MLDirectionAdapter
@@ -534,7 +690,10 @@ def _tab_ml(lang: str = "en") -> None:
     if sig is None:
         st.error(t("ml.unavailable", lang))
         return
-    _render_ml_gauge(sig.to_dict())
+    sig_dict = sig.to_dict()
+    _store()["ml"][ticker] = rs.ml_snapshot(ticker, sig_dict, _now_iso())
+    _store()["active_ticker"] = ticker
+    _render_ml_gauge(sig_dict)
 
 
 # ---------------------------------------------------------------------------
@@ -573,29 +732,33 @@ def _tab_ledger(lang: str = "en") -> None:
         st.subheader(t("ledger.pie_title", lang))
         st.plotly_chart(fig, use_container_width=True)
 
+    # Record an aggregate ledger summary for chat grounding (counts only).
+    _store()["ledger"] = rs.ledger_summary_snapshot(
+        {str(r["action"]): int(r["count"]) for _i, r in counts.iterrows()},
+        len(df),
+        _now_iso(),
+    )
 
-def _tab_chat(sidebar_opts: dict[str, Any]) -> None:
-    """Free-form chat grounded in the latest analysis result."""
+
+def _chat_panel(sidebar_opts: dict[str, Any]) -> None:
+    """Persistent right-side chat panel grounded on ALL view results.
+
+    The grounding context is assembled from the session research store (screen
+    / analyze / ML / ledger snapshots), so the chat reflects the latest results
+    across every view — not just the single-ticker analysis.
+    """
 
     lang = sidebar_opts.get("lang", "en")
-    st.header(t("chat.header", lang))
-    st.caption(t("chat.caption", lang))
+    st.subheader(t("chat.header", lang))
+    st.caption(t("chat.panel_grounding", lang))
 
-    summary = st.session_state.get("last_analysis_summary") or {}
-    ticker = st.session_state.get("last_analysis_ticker")
-    ts = st.session_state.get("last_analysis_ts")
-    if summary and ticker:
-        st.info(t("chat.context_summary", lang, ticker=ticker, ts=ts or "—"))
-    else:
-        st.warning(t("chat.no_context", lang))
+    store = _store()
+    context_block = rs.build_context(store, lang, now_iso=_now_iso())
 
     history: list[ChatMessage] = st.session_state.setdefault("chat_history", [])
-
-    col1, col2 = st.columns([1, 1])
-    with col2:
-        if st.button(t("chat.clear_btn", lang), use_container_width=True):
-            st.session_state["chat_history"] = []
-            history = st.session_state["chat_history"]
+    if st.button(t("chat.clear_btn", lang), use_container_width=True, key="chat_clear"):
+        st.session_state["chat_history"] = []
+        history = st.session_state["chat_history"]
 
     for m in history:
         with st.chat_message(m.role):
@@ -615,7 +778,8 @@ def _tab_chat(sidebar_opts: dict[str, Any]) -> None:
                 reply = chat_complete(
                     history=history[:-1],
                     user_message=user_input,
-                    context_bundle=summary,
+                    context_bundle=None,
+                    context_block=context_block,
                     lang=lang,
                     provider=sidebar_opts.get("provider"),
                     disclaimer=DISCLAIMER,
@@ -633,28 +797,50 @@ def _tab_chat(sidebar_opts: dict[str, Any]) -> None:
         st.session_state["chat_history"] = history
 
 
+def _view_selector(lang: str) -> str:
+    """Session-state-backed view selector (replaces st.tabs so drill-down can
+    navigate programmatically). Market screen is first.
+
+    Programmatic navigation uses a `nav_to` marker consumed HERE, before the
+    radio widget is instantiated — Streamlit forbids mutating a widget-keyed
+    session value after the widget renders, so the drill-down handler only sets
+    `nav_to` + reruns, and this function applies it pre-instantiation.
+    """
+
+    nav_to = st.session_state.pop("nav_to", None)
+    if nav_to in _VIEWS:
+        st.session_state["view_radio"] = nav_to
+    chosen = st.radio(
+        t("nav.label", lang),
+        options=_VIEWS,
+        horizontal=True,
+        format_func=lambda v: t(_VIEW_LABEL_KEY[v], lang),
+        key="view_radio",
+    )
+    st.session_state["active_view"] = chosen
+    return chosen
+
+
 def main() -> None:
     opts = _sidebar()
-    _disclaimer_banner()
     lang = opts["lang"]
+    # Stash provider override so the screen "Explain" button can reach it.
+    st.session_state["provider_override"] = opts.get("provider")
 
-    tabs = st.tabs([
-        t("tab.analyze", lang),
-        t("tab.screen", lang),
-        t("tab.ml", lang),
-        t("tab.ledger", lang),
-        t("tab.chat", lang),
-    ])
-    with tabs[0]:
-        _tab_analyze(opts)
-    with tabs[1]:
-        _tab_screen(lang)
-    with tabs[2]:
-        _tab_ml(lang)
-    with tabs[3]:
-        _tab_ledger(lang)
-    with tabs[4]:
-        _tab_chat(opts)
+    main_col, chat_col = st.columns([3, 1])
+    with main_col:
+        _disclaimer_banner()
+        view = _view_selector(lang)
+        if view == "screen":
+            _tab_screen(lang)
+        elif view == "analyze":
+            _tab_analyze(opts)
+        elif view == "ml":
+            _tab_ml(lang)
+        elif view == "ledger":
+            _tab_ledger(lang)
+    with chat_col:
+        _chat_panel(opts)
 
 
 # Streamlit invokes the top-level module — pandas imports need to be local

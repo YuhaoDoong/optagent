@@ -164,6 +164,40 @@ _TABLE: dict[str, dict[str, str]] = {
     },
     "chat.error": {"en": "Chat call failed: {err}", "zh": "对话调用失败：{err}"},
     "chat.clear_btn": {"en": "Clear conversation", "zh": "清空对话"},
+    "chat.panel_grounding": {
+        "en": "Grounded on the latest results across all views.",
+        "zh": "以各视图最新结果为对话上下文。",
+    },
+
+    # View navigation (replaces tabs)
+    "nav.label": {"en": "View", "zh": "视图"},
+
+    # Multi-strategy screen additions
+    "screen.multiselect_label": {"en": "Strategies (select one or more)", "zh": "策略(可多选)"},
+    "screen.select_prompt": {"en": "Select at least one strategy.", "zh": "请至少选择一个策略。"},
+    "screen.per_strategy_title": {"en": "Per-strategy results", "zh": "各策略结果"},
+    "screen.strategy_error": {"en": "Strategy '{sid}' failed: {err}", "zh": "策略 '{sid}' 出错:{err}"},
+    "screen.synthesis_title": {"en": "Top cross-strategy picks", "zh": "跨策略最佳候选"},
+    "screen.synthesis_caption": {
+        "en": "Deterministic ranking: more strategies agreeing (resonance) first, then combined normalized score. The LLM only explains this order.",
+        "zh": "确定性排序:多策略共振优先,再看综合归一化得分。LLM 只负责解释这个排名,不参与排序。",
+    },
+    "screen.col_resonance": {"en": "Strategies agreeing", "zh": "共振策略数"},
+    "screen.col_support": {"en": "Supporting strategies", "zh": "支持策略"},
+    "screen.col_score": {"en": "Combined score", "zh": "综合得分"},
+    "screen.drill_ml": {"en": "ML signal", "zh": "ML 信号"},
+    "screen.drill_analyze": {"en": "Analyze", "zh": "单股分析"},
+    "screen.explain_btn": {"en": "🤖 Explain results with AI", "zh": "🤖 让 AI 解释结果"},
+    "screen.explain_spinner": {"en": "Asking the LLM to explain...", "zh": "正在让 LLM 解释……"},
+    "screen.explain_title": {"en": "AI explanation (research commentary)", "zh": "AI 解释(研究性评论)"},
+    "screen.run_first": {"en": "Run a screen first, then ask the AI to explain it.", "zh": "请先运行筛选,再让 AI 解释。"},
+    "screen.no_synthesis": {"en": "No tickers triggered across the selected strategies.", "zh": "所选策略均未触发任何股票。"},
+
+    # Drill-down auto-run
+    "drill.autorun_note": {
+        "en": "Auto-running for {ticker} (from screen drill-down).",
+        "zh": "正在自动分析 {ticker}(来自筛选钻取)。",
+    },
 }
 
 
