@@ -136,6 +136,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the Yahoo News adapter even when yfinance is installed.",
     )
     analyze_p.add_argument(
+        "--use-moomoo",
+        action="store_true",
+        help=(
+            "Source the option chain from Moomoo OpenD (127.0.0.1:11111) instead "
+            "of yfinance. Returns real bid/ask/OI even after-hours; falls back to "
+            "yfinance if OpenD is unreachable."
+        ),
+    )
+    analyze_p.add_argument(
         "--enable-ml",
         action="store_true",
         help=(
@@ -268,23 +277,37 @@ def main(argv: list[str] | None = None) -> int:
 
             ml_adapter = MLDirectionAdapter()
 
-        result = analyze(
-            args.ticker.upper(),
-            registry=registry,
-            fred_adapter=fred_adapter,
-            sec_edgar_adapter=sec_adapter,
-            news_adapter=news_adapter,
-            ml_direction_adapter=ml_adapter,
-            horizon_days=args.horizon,
-            max_loss_usd=args.max_loss,
-            ledger_dir=args.ledger_dir,
-            write_ledger=not args.no_ledger,
-            enable_llm=args.enable_llm,
-            llm_client=llm_client,
-            model_version=model,
-            price_table=price_table,
-            ttl_table=ttl_table,
-        )
+        moomoo_adapter = None
+        if args.use_moomoo:
+            try:
+                from .adapters import MoomooAdapter
+
+                moomoo_adapter = MoomooAdapter(registry)
+            except Exception as e:  # noqa: BLE001
+                print(f"WARNING: Moomoo adapter disabled: {e}", file=sys.stderr)
+
+        try:
+            result = analyze(
+                args.ticker.upper(),
+                registry=registry,
+                moomoo_adapter=moomoo_adapter,
+                fred_adapter=fred_adapter,
+                sec_edgar_adapter=sec_adapter,
+                news_adapter=news_adapter,
+                ml_direction_adapter=ml_adapter,
+                horizon_days=args.horizon,
+                max_loss_usd=args.max_loss,
+                ledger_dir=args.ledger_dir,
+                write_ledger=not args.no_ledger,
+                enable_llm=args.enable_llm,
+                llm_client=llm_client,
+                model_version=model,
+                price_table=price_table,
+                ttl_table=ttl_table,
+            )
+        finally:
+            if moomoo_adapter is not None:
+                moomoo_adapter.close()
         sys.stdout.write(result.memo)
         if result.ledger_path:
             print(f"\n[ledger] appended to {result.ledger_path}", file=sys.stderr)

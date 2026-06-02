@@ -104,6 +104,13 @@ The sidebar exposes:
   `OPENROUTER_MODEL` to any slug (default `anthropic/claude-sonnet-4.6`).
 - `Enable ML direction signal` — first run trains a fresh model (~5s);
   subsequent runs within 7 days hit the cache (~50ms).
+- `Use Moomoo OpenD for option quotes` (on by default) — sources the option
+  chain from a local Moomoo/Futu OpenD gateway (`127.0.0.1:11111`) instead of
+  yfinance. yfinance/Yahoo zeroes out bid/ask AND open-interest whenever the
+  US market is closed, so after-hours runs otherwise SKIP with
+  `stale_required_input`; Moomoo returns real bid/ask/OI/IV even at EOD.
+  Falls back to yfinance automatically if OpenD is unreachable. Install with
+  `pip install -e .[moomoo]` and start OpenD first.
 
 Sidebar inputs do NOT persist across sessions; treat them as a
 per-session override of environment variables.

@@ -28,6 +28,12 @@ ui = [
     "plotly>=5,<7",
     "pandas>=2,<3",
 ]
+# Moomoo/Futu OpenD option-chain source (real bid/ask + OI even after-hours).
+# Requires a local OpenD gateway running on 127.0.0.1:11111.
+moomoo = [
+    "moomoo-api>=10,<11",
+    "pandas>=2,<3",
+]
 
 [project.scripts]
 optagent = "optagent.cli:main"

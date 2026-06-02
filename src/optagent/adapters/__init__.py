@@ -2,6 +2,7 @@
 
 from .econ_calendar_adapter import EconCalendarAdapter, _Event as EconEvent
 from .fred_adapter import FREDAdapter, FREDUnavailableError, SERIES_IDS as FRED_SERIES_IDS
+from .moomoo_adapter import MoomooAdapter, MoomooUnavailableError
 from .news_factual_yahoo import YahooNewsAdapter, excerpts_from_envelope as news_excerpts_from_envelope
 from .sec_edgar_adapter import SECEdgarAdapter
 from .volume_oi_context import VolumeOIContextAdapter
@@ -16,6 +17,8 @@ __all__ = [
     "FREDAdapter",
     "FREDUnavailableError",
     "FRED_SERIES_IDS",
+    "MoomooAdapter",
+    "MoomooUnavailableError",
     "SECEdgarAdapter",
     "VolumeOIContextAdapter",
     "YahooNewsAdapter",

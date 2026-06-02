@@ -162,6 +162,9 @@ def _sidebar() -> dict[str, Any]:
         disabled=not enable_llm,
     )
     enable_ml = st.sidebar.checkbox(t("sidebar.enable_ml", lang), value=False)
+    use_moomoo = st.sidebar.checkbox(
+        t("sidebar.use_moomoo", lang), value=True, help=t("sidebar.moomoo_help", lang)
+    )
 
     return {
         "lang": lang,
@@ -170,6 +173,7 @@ def _sidebar() -> dict[str, Any]:
         "enable_llm": enable_llm,
         "provider": (None if provider == auto_label else provider),
         "enable_ml": enable_ml,
+        "use_moomoo": use_moomoo,
     }
 
 
@@ -233,6 +237,14 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
         from optagent.ml import MLDirectionAdapter
         ml_adapter = MLDirectionAdapter()
 
+    moomoo_adapter = None
+    if sidebar_opts.get("use_moomoo"):
+        try:
+            from optagent.adapters import MoomooAdapter
+            moomoo_adapter = MoomooAdapter(registry)
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Moomoo adapter unavailable: {e}")
+
     llm_client = model = price_table = ttl_table = None
     if sidebar_opts["enable_llm"]:
         try:
@@ -253,6 +265,7 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
         result = analyze(
             ticker,
             registry=registry,
+            moomoo_adapter=moomoo_adapter,
             fred_adapter=fred_adapter,
             sec_edgar_adapter=sec_adapter,
             news_adapter=news_adapter,
@@ -266,6 +279,8 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
             ttl_table=ttl_table,
             lang=lang,
         )
+    if moomoo_adapter is not None:
+        moomoo_adapter.close()
 
     # Stash analysis context for the chat tab. summarise_analysis_for_context
     # picks a compact subset (no Streamlit-incompatible types) so it survives

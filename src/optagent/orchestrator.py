@@ -21,6 +21,7 @@ from . import DISCLAIMER
 from .adapters import (
     EconCalendarAdapter,
     FREDAdapter,
+    MoomooAdapter,
     SECEdgarAdapter,
     VolumeOIContextAdapter,
     YahooNewsAdapter,
@@ -261,6 +262,7 @@ def analyze(
     *,
     registry: ProviderRegistry | None = None,
     yfinance_adapter: YFinanceAdapter | None = None,
+    moomoo_adapter: MoomooAdapter | None = None,
     fred_adapter: FREDAdapter | None = None,
     econ_calendar_adapter: EconCalendarAdapter | None = None,
     sec_edgar_adapter: SECEdgarAdapter | None = None,
@@ -303,6 +305,7 @@ def analyze(
         enable_llm=enable_llm,
         model_version=model_version,
         prompt_version=SYNTHESIS_PROMPT_VERSION if enable_llm else "v0",
+        moomoo_entitled=moomoo_adapter is not None,
     )
     if not registry.is_bound():
         registry.bind(run_config)
@@ -314,10 +317,30 @@ def analyze(
     if volume_oi_adapter is None:
         volume_oi_adapter = VolumeOIContextAdapter(registry)
 
-    price_env = yfinance_adapter.get_price(ticker)
-    chain_env = yfinance_adapter.get_options_chain(
-        ticker, min_dte=max(1, horizon_days // 2), max_dte=max(horizon_days * 3, 45)
-    )
+    min_dte = max(1, horizon_days // 2)
+    max_dte = max(horizon_days * 3, 45)
+
+    # Option chain: prefer Moomoo OpenD when supplied (it returns real bid/ask
+    # + OI even when the US market is closed, unlike the yfinance/Yahoo feed
+    # which zeroes those out at EOD). Fall back to yfinance if Moomoo is
+    # unavailable so a missing OpenD never makes the run worse than before.
+    chain_env = None
+    if moomoo_adapter is not None:
+        mm_chain = moomoo_adapter.get_options_chain(ticker, min_dte=min_dte, max_dte=max_dte)
+        if mm_chain.confidence is not Confidence.unavailable and mm_chain.value:
+            chain_env = mm_chain
+    if chain_env is None:
+        chain_env = yfinance_adapter.get_options_chain(ticker, min_dte=min_dte, max_dte=max_dte)
+
+    # Spot: Moomoo snapshot first (real EOD/realtime), else yfinance.
+    price_env = None
+    if moomoo_adapter is not None:
+        mm_price = moomoo_adapter.get_price(ticker)
+        if mm_price.confidence is not Confidence.unavailable and mm_price.value:
+            price_env = mm_price
+    if price_env is None:
+        price_env = yfinance_adapter.get_price(ticker)
+
     history_env = yfinance_adapter.get_history(ticker)
     econ_env = econ_calendar_adapter.get_calendar()
     spot_for_voi = None

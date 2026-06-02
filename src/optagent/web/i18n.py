@@ -41,6 +41,14 @@ _TABLE: dict[str, dict[str, str]] = {
         "zh": "启用 ML 方向模型（Alt-3 v0）",
     },
     "sidebar.auto_detect": {"en": "auto-detect", "zh": "自动检测"},
+    "sidebar.use_moomoo": {
+        "en": "Use Moomoo OpenD for option quotes (works after-hours)",
+        "zh": "用 Moomoo OpenD 获取期权报价(收盘也可用)",
+    },
+    "sidebar.moomoo_help": {
+        "en": "Requires Moomoo OpenD running locally on 127.0.0.1:11111. Falls back to yfinance if unreachable. yfinance zeroes bid/ask/OI when the US market is closed; Moomoo does not.",
+        "zh": "需要本地运行 Moomoo OpenD(127.0.0.1:11111)。连不上会自动回退到 yfinance。yfinance 在美股收盘时会把买卖盘口和持仓量清零,Moomoo 不会。",
+    },
 
     # Disclaimer banner
     "disclaimer.banner": {
