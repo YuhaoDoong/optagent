@@ -22,23 +22,31 @@ from .chat import chat_complete
 from .research_store import json_safe
 
 
+# Cap on the serialized snapshot grounding (chars). Keeps the opt-in
+# explanation prompt bounded regardless of how large a screen run was.
+_CONTEXT_CAP = 8000
+
 _EXPLAIN_EN = (
     "Explain this market-screen result as research commentary (NOT advice). "
     "For the top cross-strategy picks and each strategy's triggered tickers: "
     "(1) why the screen surfaced them, in plain language; (2) what each "
     "strategy's logic/Notes indicators mean; (3) a credibility/confidence read "
     "(e.g. how many strategies agree, any stale-data caveats). Do NOT invent "
-    "numbers beyond the context, do NOT recommend a trade, contract, strike, or "
-    "size, and do NOT produce a verdict. End with a one-line reminder that this "
-    "is research only."
+    "numbers beyond the context. Do NOT recommend a trade, contract, strike, "
+    "expiry, or position size; do NOT propose shorts, naked, or 0DTE; do NOT "
+    "place, submit, or describe how to place an order; and do NOT produce a "
+    "verdict or any verdict outside {SKIP, LONG_CALL, LONG_PUT}. End with a "
+    "one-line reminder that this is research only."
 )
 
 _EXPLAIN_ZH = (
     "把这份市场筛选结果当作研究性评论来解释(不是投资建议)。针对跨策略最佳候选"
     "和各策略触发的股票:(1)用通俗语言说明筛选为什么选中它们;(2)解释每个策略的"
     "逻辑和 Notes 里指标的含义;(3)给出可信度/置信度判断(例如几个策略共振、是否"
-    "有数据过期的警示)。不要编造上下文之外的数字,不要推荐任何交易/合约/行权价/"
-    "仓位,也不要给出 verdict。结尾附一句:本内容仅供研究参考。"
+    "有数据过期的警示)。不要编造上下文之外的数字;不要推荐任何交易/合约/行权价/"
+    "到期/仓位大小;不要建议卖出期权、裸期权或 0DTE;不要下单、提交订单或说明如何"
+    "下单;也不要给出 verdict 或 {SKIP, LONG_CALL, LONG_PUT} 之外的任何 verdict。"
+    "结尾附一句:本内容仅供研究参考。"
 )
 
 
@@ -56,6 +64,8 @@ def build_snapshot_context_block(screen_snapshot: Mapping[str, Any] | None) -> s
 
     payload = json.dumps(json_safe(dict(screen_snapshot or {})), ensure_ascii=False, indent=2)
     payload = payload.replace("<", "\\u003c").replace(">", "\\u003e")
+    if len(payload) > _CONTEXT_CAP:
+        payload = payload[:_CONTEXT_CAP] + "\n…(truncated)"
     return f"<analysis_context>\n{payload}\n</analysis_context>"
 
 

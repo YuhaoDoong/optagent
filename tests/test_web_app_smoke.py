@@ -41,3 +41,31 @@ def test_app_renders_english_without_exception():
     at.run()
     assert not at.exception, f"render raised: {at.exception}"
     assert "Run screen" in [b.label for b in at.button]
+
+
+@pytest.mark.parametrize("view", ["screen", "analyze", "ml", "ledger"])
+def test_chat_panel_persists_across_all_views(view):
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["active_view"] = view
+    at.session_state["view_radio"] = view
+    at.run()
+    assert not at.exception, f"render raised on view={view}: {at.exception}"
+    # The persistent chat panel (its chat_input) is present on every view.
+    assert len(at.chat_input) >= 1
+
+
+def test_analyze_plain_render_does_not_call_provider(monkeypatch):
+    called = {"analyze": 0}
+
+    def _spy(*a, **k):
+        called["analyze"] += 1
+        raise AssertionError("analyze must not be auto-called on a plain render")
+
+    monkeypatch.setattr("optagent.orchestrator.analyze", _spy)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["active_view"] = "analyze"
+    at.session_state["view_radio"] = "analyze"
+    # No pending_drilldown and the Analyze button is not pressed.
+    at.run()
+    assert not at.exception, f"render raised: {at.exception}"
+    assert called["analyze"] == 0

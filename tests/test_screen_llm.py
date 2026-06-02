@@ -27,6 +27,17 @@ def test_explain_message_en_forbids_advice_and_verdicts():
     assert "verdict" in low
     assert "recommend" in low  # explicitly forbids recommending a trade
     assert "credibility" in low or "confidence" in low
+    assert "order" in low  # explicit order-placement prohibition (AC-6)
+
+
+def test_explain_message_zh_forbids_order_placement():
+    assert "下单" in build_explain_message("zh")
+
+
+def test_snapshot_context_block_is_bounded():
+    huge = {"strategies": {"s1": {"signals": [{"ticker": "T", "notes": ["x" * 50_000]}]}}}
+    block = build_snapshot_context_block(huge)
+    assert len(block) < 9000  # _CONTEXT_CAP (8000) + wrapper, well under the raw 50k
 
 
 def test_explain_message_zh_is_chinese_and_commentary_only():

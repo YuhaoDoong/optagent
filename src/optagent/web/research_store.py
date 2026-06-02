@@ -20,6 +20,7 @@ Design rules enforced here:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping, Sequence
 
 
@@ -55,17 +56,44 @@ def json_safe(obj: Any) -> Any:
     return str(obj)
 
 
+# Instruction-like phrases an attacker might smuggle through untrusted fields
+# (ticker names, notes, provider text). We don't try to be exhaustive — we
+# defang the common prompt-injection openers by inserting a zero-width space
+# after the first character so the literal phrase no longer reads as a command.
+_INJECTION_PATTERNS = [
+    r"ignore\s+(?:all\s+)?(?:the\s+)?previous",
+    r"disregard\s+(?:all\s+)?(?:the\s+)?previous",
+    r"forget\s+(?:all\s+)?(?:the\s+)?previous",
+    r"system\s+prompt",
+    r"you\s+are\s+now",
+    r"new\s+instructions?",
+    r"override\s+(?:all\s+)?instructions?",
+]
+_INJECTION_RE = re.compile("|".join(_INJECTION_PATTERNS), re.IGNORECASE)
+_ZWSP = "​"
+
+
+def _defang_injection(text: str) -> str:
+    def _ins(m: "re.Match[str]") -> str:
+        tok = m.group(0)
+        return tok[:1] + _ZWSP + tok[1:]
+
+    return _INJECTION_RE.sub(_ins, text)
+
+
 def escape_untrusted(text: Any, *, cap: int = _FIELD_CAP) -> str:
     """Neutralize a possibly-untrusted string for inclusion in the context.
 
     Strips control characters, escapes angle brackets (so embedded text can
-    never open/close the `<analysis_context>` delimiter or any pseudo-tag), and
-    truncates to `cap` characters. Non-strings are stringified first.
+    never open/close the `<analysis_context>` delimiter or any pseudo-tag),
+    defangs common instruction-injection phrases, and truncates to `cap`
+    characters. Non-strings are stringified first.
     """
 
     s = text if isinstance(text, str) else str(text)
     s = "".join(c for c in s if c >= " " or c in "\n\t")
     s = s.replace("<", "&lt;").replace(">", "&gt;")
+    s = _defang_injection(s)
     if len(s) > cap:
         s = s[:cap] + "…"
     return s
@@ -101,16 +129,20 @@ def screen_snapshot(
     results_by_strategy: Mapping[str, Mapping[str, Any]],
     synthesis: Sequence[Mapping[str, Any]] | None,
     computed_at: str,
+    inputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalize a multi-strategy screen run into a compact snapshot.
 
     `results_by_strategy[strategy_id]` is expected to carry `signals` (list of
     compact signal dicts), `error` (str|None), `n_triggered`, and optionally a
     `stale_tickers` list. Empty / falsy input yields an unavailable snapshot.
+    `inputs` records the run parameters (strategies, sector, limit).
     """
 
     if not results_by_strategy:
-        return _base_snapshot("screen", computed_at, available=False, stale=False)
+        snap = _base_snapshot("screen", computed_at, available=False, stale=False)
+        snap["inputs"] = json_safe(dict(inputs or {}))
+        return snap
     strategies = {}
     any_stale = False
     for sid, res in results_by_strategy.items():
@@ -135,6 +167,7 @@ def screen_snapshot(
             }
         )
     snap = _base_snapshot("screen", computed_at, available=True, stale=any_stale)
+    snap["inputs"] = json_safe(dict(inputs or {}))
     snap["strategies"] = strategies
     snap["synthesis"] = json_safe(list(synthesis or []))
     return snap
@@ -145,11 +178,14 @@ def analysis_snapshot(
     verdict: Mapping[str, Any] | None,
     candidates: Sequence[Mapping[str, Any]] | None,
     computed_at: str,
+    inputs: Mapping[str, Any] | None = None,
+    envelopes: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not ticker:
         return _base_snapshot("analysis", computed_at, available=False, stale=False)
     snap = _base_snapshot("analysis", computed_at, available=verdict is not None, stale=False)
     snap["ticker"] = ticker
+    snap["inputs"] = json_safe(dict(inputs or {}))
     snap["verdict"] = json_safe(verdict) if verdict is not None else None
     snap["candidates"] = json_safe(
         [
@@ -166,14 +202,31 @@ def analysis_snapshot(
             for c in (candidates or [])[:8]
         ]
     )
+    # Compact upstream-status summary so chat can cite data provenance/freshness.
+    snap["sources"] = json_safe(
+        [
+            {
+                "source": e.get("source"),
+                "confidence": e.get("confidence"),
+                "as_of": e.get("as_of"),
+            }
+            for e in (envelopes or [])[:10]
+        ]
+    )
     return snap
 
 
-def ml_snapshot(ticker: str, ml: Mapping[str, Any] | None, computed_at: str) -> dict[str, Any]:
+def ml_snapshot(
+    ticker: str,
+    ml: Mapping[str, Any] | None,
+    computed_at: str,
+    inputs: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if not ticker:
         return _base_snapshot("ml", computed_at, available=False, stale=False)
     snap = _base_snapshot("ml", computed_at, available=ml is not None, stale=False)
     snap["ticker"] = ticker
+    snap["inputs"] = json_safe(dict(inputs or {"ticker": ticker}))
     snap["signal"] = json_safe(ml) if ml is not None else None
     return snap
 
@@ -189,6 +242,41 @@ def ledger_summary_snapshot(
 
 # ---------------------------------------------------------------------------
 # Cross-strategy synthesis (deterministic, LLM-free)
+
+
+def run_strategies(strategy_ids: Sequence[str], run_one) -> dict[str, dict[str, Any]]:
+    """Run `run_one(strategy_id)` per id with per-strategy error isolation.
+
+    Pure orchestration (no Streamlit / network of its own): `run_one` is a
+    caller-supplied callable returning the per-strategy result dict. A raising
+    `run_one` is captured as an `error` entry so one strategy's failure never
+    aborts the others. Order follows `strategy_ids` (deterministic).
+    """
+
+    results: dict[str, dict[str, Any]] = {}
+    for sid in strategy_ids:
+        try:
+            results[sid] = run_one(sid)
+        except Exception as e:  # noqa: BLE001 — isolate one strategy's failure
+            results[sid] = {"error": f"{type(e).__name__}: {e}", "signals": []}
+    return results
+
+
+def consume_drilldown(state: dict[str, Any], target: str) -> str | None:
+    """Claim a one-shot drill-down for `target` from a mutable state dict.
+
+    Returns the ticker exactly once (clearing the marker) when a pending
+    drill-down targets this view; returns None otherwise. Pure: operates on a
+    plain dict so it is unit-testable without Streamlit.
+    """
+
+    pending = state.get("pending_drilldown")
+    if pending and pending.get("target") == target and pending.get("ticker"):
+        ticker = str(pending["ticker"]).upper()
+        state["active_ticker"] = ticker
+        state["pending_drilldown"] = None
+        return ticker
+    return None
 
 
 def synthesise_cross_strategy(
@@ -309,32 +397,46 @@ def build_context(
             if sres.get("error"):
                 lines.append(f"  [{escape_untrusted(sid)}] error: {escape_untrusted(sres.get('error'))}")
                 continue
-            tickers = ",".join(
-                escape_untrusted(s.get("ticker")) for s in (sres.get("signals") or [])[:8]
-            )
             lines.append(
-                f"  [{escape_untrusted(sid)}] triggered={escape_untrusted(sres.get('n_triggered'))} "
-                f"top=[{tickers}]"
+                f"  [{escape_untrusted(sid)}] triggered={escape_untrusted(sres.get('n_triggered'))}:"
             )
+            for s in (sres.get("signals") or [])[:6]:
+                notes = "; ".join(escape_untrusted(n) for n in (s.get("notes") or [])[:2])
+                lines.append(
+                    f"    - {escape_untrusted(s.get('ticker'))} "
+                    f"dir={escape_untrusted(s.get('direction'))} "
+                    f"score={escape_untrusted(s.get('score'))}"
+                    + (f" notes=[{notes}]" if notes else "")
+                )
 
-    # --- Analysis (per ticker) ---
+    # --- Analysis (per ticker) — available entries only ---
     lines.append(section("## Single-stock analysis", "## 单股票分析"))
-    analysis = store.get("analysis") or {}
+    analysis = {k: v for k, v in (store.get("analysis") or {}).items() if v and v.get("available")}
     if not analysis:
         lines.append(missing)
     else:
         for ticker, snap in list(analysis.items())[:5]:
             tag = stale_tag if _is_stale_for_grounding(snap, now_iso, max_age_s) else ""
             v = snap.get("verdict") or {}
+            srcs = ",".join(
+                escape_untrusted(s.get("source")) for s in (snap.get("sources") or [])[:6]
+            )
+            cands = ",".join(
+                escape_untrusted(c.get("occ_symbol")) for c in (snap.get("candidates") or [])[:5]
+            )
             lines.append(
                 f"  {escape_untrusted(ticker)}: verdict={escape_untrusted(v.get('action'))} "
                 f"skip_reason={escape_untrusted(v.get('skip_reason'))} "
                 f"computed_at={escape_untrusted(snap.get('computed_at'))}{tag}"
             )
+            if cands:
+                lines.append(f"      candidates=[{cands}]")
+            if srcs:
+                lines.append(f"      sources=[{srcs}]")
 
-    # --- ML (per ticker) ---
+    # --- ML (per ticker) — available entries only ---
     lines.append(section("## ML direction signal", "## ML 方向信号"))
-    ml = store.get("ml") or {}
+    ml = {k: v for k, v in (store.get("ml") or {}).items() if v and v.get("available")}
     if not ml:
         lines.append(missing)
     else:
@@ -343,7 +445,8 @@ def build_context(
             tag = stale_tag if _is_stale_for_grounding(snap, now_iso, max_age_s) else ""
             lines.append(
                 f"  {escape_untrusted(ticker)}: prob_up={escape_untrusted(sig.get('prob_up'))} "
-                f"credibility={escape_untrusted(sig.get('credibility'))}{tag}"
+                f"credibility={escape_untrusted(sig.get('credibility'))} "
+                f"computed_at={escape_untrusted(snap.get('computed_at'))}{tag}"
             )
 
     # --- Ledger ---
@@ -352,12 +455,14 @@ def build_context(
     if not ledger or not ledger.get("available"):
         lines.append(missing)
     else:
+        tag = stale_tag if _is_stale_for_grounding(ledger, now_iso, max_age_s) else ""
         counts = ", ".join(
             f"{escape_untrusted(k)}={escape_untrusted(v)}"
             for k, v in (ledger.get("action_counts") or {}).items()
         )
         lines.append(
-            f"rows={escape_untrusted(ledger.get('n_rows'))} verdicts: {counts}"
+            f"rows={escape_untrusted(ledger.get('n_rows'))} "
+            f"computed_at={escape_untrusted(ledger.get('computed_at'))}{tag} verdicts: {counts}"
         )
 
     body = "\n".join(lines)
@@ -367,4 +472,10 @@ def build_context(
     budget = max_chars - overhead
     if len(body) > budget:
         body = body[: max(0, budget - len(trunc))] + trunc
-    return f"{_OPEN}\n{body}\n{_CLOSE}"
+    result = f"{_OPEN}\n{body}\n{_CLOSE}"
+    # Hard backstop: never exceed the configured cap for ANY cap, even ones
+    # smaller than the delimiter overhead (the graceful budget path above
+    # assumes max_chars > overhead).
+    if len(result) > max_chars:
+        result = result[:max_chars]
+    return result

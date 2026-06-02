@@ -1,14 +1,23 @@
 """Streamlit entry point: ``optagent-ui`` (or ``streamlit run -m optagent.web.app``).
 
-Three tabs:
-  1. Analyze a single ticker (the CLI `analyze` subcommand visualised).
-  2. Cross-ticker screen (the CLI `screen` subcommand visualised).
-  3. ML direction signal (per-ticker Alt-3 v0 model with Wilson CI gauge).
+Two-column layout: a main content area with a session-state-backed view
+selector (replacing st.tabs so drill-down can navigate programmatically) and a
+persistent right-side chat panel grounded on a session research store.
 
-Every tab respects the project's safety invariants:
-  - Disclaimer banner at the top of every page.
+Main views (Market screen first):
+  1. Market screen — multi-strategy run with per-strategy diagnostics, a
+     deterministic cross-strategy synthesis, opt-in LLM explanation, and
+     one-click drill-down into the Analyze / ML views.
+  2. Analyze a single ticker (the CLI `analyze` subcommand visualised).
+  3. ML direction signal (per-ticker model with Wilson CI gauge).
+  4. Audit ledger viewer.
+
+Every view respects the project's safety invariants:
+  - Disclaimer banner at the top of the page.
   - Bounded verdict enum (template-only by default; LLM is opt-in).
   - Fail-closed validator runs unchanged behind the scenes.
+  - LLM commentary (chat + screen explanation) is research-only and grounded
+    in escaped, bounded <analysis_context> blocks.
 """
 
 from __future__ import annotations
@@ -81,13 +90,7 @@ def _consume_drilldown(target: str) -> str | None:
     exactly once.
     """
 
-    pending = st.session_state.get("pending_drilldown")
-    if pending and pending.get("target") == target and pending.get("ticker"):
-        ticker = str(pending["ticker"]).upper()
-        st.session_state["active_ticker"] = ticker
-        st.session_state["pending_drilldown"] = None  # consume once
-        return ticker
-    return None
+    return rs.consume_drilldown(st.session_state, target)
 
 
 # ---------------------------------------------------------------------------
@@ -343,9 +346,22 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     cand_dumps = [
         c.model_dump(mode="json") for c in (result.screener_candidates or [])
     ]
+    env_summary = [
+        {
+            "source": e.source,
+            "confidence": e.confidence.value,
+            "as_of": e.as_of.isoformat() if e.as_of else None,
+        }
+        for e in (result.envelopes or [])
+    ]
     store = _store()
     store["analysis"][ticker] = rs.analysis_snapshot(
-        ticker, verdict_dump, cand_dumps, _now_iso()
+        ticker,
+        verdict_dump,
+        cand_dumps,
+        _now_iso(),
+        inputs={"ticker": ticker, "horizon_days": int(horizon), "max_loss_usd": max_loss_v},
+        envelopes=env_summary,
     )
     if result.ml_signal:
         store["ml"][ticker] = rs.ml_snapshot(ticker, dict(result.ml_signal), _now_iso())
@@ -504,43 +520,41 @@ def _signal_to_dict(sig: Any) -> dict[str, Any]:
     return sig.to_dict() if hasattr(sig, "to_dict") else dict(sig)
 
 
-def _run_multi_strategy(strategy_ids: list[str], sector: str, sector_any: str, limit: int):
-    """Run each strategy sequentially with per-strategy error isolation.
-
-    Returns results_by_strategy: {sid: {signals, n_triggered, n_evaluated,
-    stale_tickers, error}}. One strategy raising never aborts the others.
-    """
-
-    from optagent.strategies import (
-        builtin_us_large_cap,
-        filter_to_sector,
-        get_strategy,
-        screen_universe,
-    )
+def _build_universe(sector: str, sector_any: str) -> list[str]:
+    from optagent.strategies import builtin_us_large_cap, filter_to_sector
 
     universe = builtin_us_large_cap()
     if sector != sector_any:
         universe = filter_to_sector(universe, sector)
+    return universe
 
-    results: dict[str, dict[str, Any]] = {}
-    for sid in strategy_ids:  # deterministic: preserves selection order
-        try:
-            if not universe:
-                results[sid] = {"error": "empty_universe", "signals": []}
-                continue
-            strategy = get_strategy(sid)
-            res = screen_universe(strategy, universe, top_n=int(limit))
-            results[sid] = {
-                "error": None,
-                "signals": [_signal_to_dict(s) for s in res.top_signals],
-                "n_triggered": res.n_triggered,
-                "n_evaluated": res.n_evaluated,
-                "stale_tickers": [tk for (tk, _d, _n) in res.stale_bars],
-                "near_misses": [_signal_to_dict(s) for s in res.top_near_misses],
-            }
-        except Exception as e:  # noqa: BLE001 — isolate one strategy's failure
-            results[sid] = {"error": f"{type(e).__name__}: {e}", "signals": []}
-    return results
+
+def _run_multi_strategy(strategy_ids: list[str], universe: list[str], limit: int):
+    """Run each strategy sequentially with per-strategy error isolation.
+
+    Per-strategy execution is isolated by `research_store.run_strategies`, so
+    one strategy raising never aborts the others. Returns
+    results_by_strategy: {sid: {signals, n_triggered, n_evaluated,
+    stale_tickers, stale_bars, near_misses, error}}.
+    """
+
+    from optagent.strategies import get_strategy, screen_universe
+
+    def run_one(sid: str) -> dict[str, Any]:
+        if not universe:
+            return {"error": "empty_universe", "signals": []}
+        res = screen_universe(get_strategy(sid), universe, top_n=int(limit))
+        return {
+            "error": None,
+            "signals": [_signal_to_dict(s) for s in res.top_signals],
+            "n_triggered": res.n_triggered,
+            "n_evaluated": res.n_evaluated,
+            "stale_tickers": [tk for (tk, _d, _n) in res.stale_bars],
+            "stale_bars": [[tk, d, n] for (tk, d, n) in res.stale_bars],
+            "near_misses": [_signal_to_dict(s) for s in res.top_near_misses],
+        }
+
+    return rs.run_strategies(strategy_ids, run_one)
 
 
 def _tab_screen(lang: str = "en") -> None:
@@ -567,13 +581,24 @@ def _tab_screen(lang: str = "en") -> None:
         if not strategy_ids:
             st.warning(t("screen.select_prompt", lang))
         else:
-            with st.spinner(t("screen.spinner", lang, strategy=", ".join(strategy_ids), n=85)):
-                results = _run_multi_strategy(strategy_ids, sector, sector_any, int(limit))
-            synthesis = rs.synthesise_cross_strategy(results, top_n=int(limit))
-            # Persist so reruns (e.g. the Explain button) keep the data, and the
-            # chat panel can ground on it.
-            st.session_state["last_screen"] = {"results": results, "synthesis": synthesis}
-            _store()["screen"] = rs.screen_snapshot(results, synthesis, _now_iso())
+            universe = _build_universe(sector, sector_any)
+            if not universe:
+                st.warning(t("screen.sector_empty_warning", lang, sector=sector))
+            else:
+                with st.spinner(
+                    t("screen.spinner", lang, strategy=", ".join(strategy_ids), n=len(universe))
+                ):
+                    results = _run_multi_strategy(strategy_ids, universe, int(limit))
+                synthesis = rs.synthesise_cross_strategy(results, top_n=int(limit))
+                # Persist so reruns (e.g. the Explain button) keep the data, and
+                # the chat panel can ground on it.
+                st.session_state["last_screen"] = {"results": results, "synthesis": synthesis}
+                _store()["screen"] = rs.screen_snapshot(
+                    results,
+                    synthesis,
+                    _now_iso(),
+                    inputs={"strategies": strategy_ids, "sector": sector, "limit": int(limit)},
+                )
 
     snap = st.session_state.get("last_screen")
     if not snap:
@@ -629,22 +654,45 @@ def _tab_screen(lang: str = "en") -> None:
                 else:
                     st.error(t("chat.error", lang, err=str(e)))
 
-    # --- Per-strategy result tables ---
+    # --- Per-strategy result tables + diagnostics ---
     st.subheader(t("screen.per_strategy_title", lang))
+    import plotly.express as px
+
     for sid, res in results.items():
         with st.expander(f"{sid}", expanded=len(results) == 1):
             if res.get("error"):
                 st.error(t("screen.strategy_error", lang, sid=sid, err=res["error"]))
                 continue
-            st.caption(
-                t("screen.metric_triggered", lang) + f": {res.get('n_triggered')}    "
-                + t("screen.metric_evaluated", lang) + f": {res.get('n_evaluated')}"
-            )
+            c_l, c_r = st.columns(2)
+            c_l.metric(t("screen.metric_evaluated", lang), res.get("n_evaluated"))
+            c_r.metric(t("screen.metric_triggered", lang), res.get("n_triggered"))
+
+            stale_bars = res.get("stale_bars") or []
+            if stale_bars:
+                st.warning(t("screen.stale_warning", lang, n=len(stale_bars)))
+                with st.expander(t("screen.stale_details", lang)):
+                    st.dataframe(
+                        pd.DataFrame(stale_bars, columns=["ticker", "last_bar", "trading_days_behind"]),
+                        use_container_width=True, hide_index=True,
+                    )
+
             sigs = res.get("signals") or []
             if sigs:
-                st.dataframe(strategy_signal_table(sigs), use_container_width=True, hide_index=True)
+                df = strategy_signal_table(sigs)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                if "Ticker" in df and "Score" in df and not df.empty:
+                    fig = px.bar(df, x="Ticker", y="Score", color="Direction", height=260)
+                    fig.update_layout(margin=dict(l=10, r=10, t=20, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info(t("screen.no_trigger", lang))
+
+            nm = res.get("near_misses") or []
+            if nm:
+                with st.expander(t("screen.near_misses_expander", lang, n=len(nm))):
+                    st.dataframe(
+                        strategy_signal_table(nm), use_container_width=True, hide_index=True
+                    )
 
 
 def _drilldown(ticker: str, target: str) -> None:
@@ -688,6 +736,10 @@ def _tab_ml(lang: str = "en") -> None:
         adapter = MLDirectionAdapter()
         sig = adapter.signal(ticker)
     if sig is None:
+        # Overwrite any prior successful snapshot so the chat panel never grounds
+        # on stale success as if it were the latest result.
+        _store()["ml"][ticker] = rs.ml_snapshot(ticker, None, _now_iso())
+        _store()["active_ticker"] = ticker
         st.error(t("ml.unavailable", lang))
         return
     sig_dict = sig.to_dict()
@@ -716,6 +768,7 @@ def _tab_ledger(lang: str = "en") -> None:
 
     df = ledger_index(_P(ledger_dir), days_back=int(days_back))
     if df.empty:
+        _store()["ledger"] = rs.ledger_summary_snapshot(None, 0, _now_iso())
         st.info(t("ledger.empty", lang))
         return
 

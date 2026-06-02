@@ -17,7 +17,28 @@ Ctrl-C to stop.
 Want a different port? `optagent-ui --server.port 8765` — any flag is
 forwarded to `streamlit run`.
 
-## Tabs
+## Layout
+
+The page is two columns: a main content area with a session-state-backed view
+selector (Market screen, Analyze, ML, Ledger — **Market screen first**) and a
+**persistent right-side chat panel**. The chat grounds on a session research
+store that captures the latest results across every view (escaped, bounded
+`<analysis_context>`); it is research commentary only and never recommends or
+places trades.
+
+## Views
+
+### 🔭 Screen market (first)
+Multi-strategy screen. Pick one or more strategies + optional sector + top-N,
+hit **Run screen**. Renders:
+- A **deterministic cross-strategy synthesis** of the best picks (resonance
+  first — how many strategies agree — then combined normalized score; the LLM
+  only explains this fixed order, it never ranks).
+- One-click **drill-down** per pick into the Analyze and ML views (auto-runs).
+- An opt-in **"Explain results with AI"** button (plain-language research
+  commentary: why selected, strategy logic, credibility).
+- Per-strategy diagnostics: evaluated/triggered metrics, stale-bar warnings
+  (US-market-holiday footgun), a score bar chart, and a near-miss panel.
 
 ### 📊 Analyze ticker
 The visual version of `optagent analyze <ticker>`. Type a ticker, pick a
@@ -28,13 +49,6 @@ horizon + max-loss budget, hit **Analyze**. Renders:
 - Screener candidate table (Greeks, breakeven, max-loss, scores).
 - ML signal gauge (if `Enable ML direction signal` ticked).
 - Plain-text memo (the same one CLI prints).
-
-### 🔭 Screen market
-The visual version of `optagent screen --strategy ... --sector ...`.
-- Pick a strategy + optional sector + top-N.
-- Bar chart of triggered candidates by score.
-- Stale-bar warnings (Codex R5 finding: US-market-holiday footgun).
-- Near-misses (skip verdicts with score > 0) in a collapsible panel.
 
 ### 🧠 ML signal
 Per-ticker GradientBoosting direction model with:
