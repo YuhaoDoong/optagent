@@ -465,6 +465,30 @@ def test_build_context_preserves_all_sections_under_truncation():
     assert "## ML direction signal" in ctx
 
 
+def test_build_context_includes_envelope_as_of():
+    store = rs.init_store()
+    store["analysis"]["AAPL"] = rs.analysis_snapshot(
+        "AAPL", {"action": "SKIP", "skip_reason": "x"}, [], "t",
+        envelopes=[{"tool_call_id": "tc-1", "source": "yfinance", "confidence": "ok",
+                    "delay_assumption": "delayed_15min", "as_of": "2026-06-02T03:00:00+00:00"}],
+    )
+    ctx = rs.build_context(store, "en")
+    assert "as_of=2026-06-02T03:00:00+00:00" in ctx
+
+
+def test_build_context_stale_legend_is_sorted_deterministic():
+    store = rs.init_store()
+    stale = [f"Z{i}" for i in range(12)]  # >8, insertion/hash order varied
+    store["screen"] = rs.screen_snapshot(
+        {"s1": {"error": None, "n_triggered": 12, "stale_tickers": stale,
+                "signals": [{"ticker": t, "score": 1.0} for t in stale]}},
+        [], "t",
+    )
+    ctx = rs.build_context(store, "en")
+    # Legend shows the first 8 stale tickers in SORTED order (deterministic).
+    assert "*=stale: Z0,Z1,Z10,Z11,Z2,Z3,Z4,Z5)" in ctx
+
+
 def test_build_context_marks_stale_screen_rows():
     store = rs.init_store()
     store["screen"] = rs.screen_snapshot(

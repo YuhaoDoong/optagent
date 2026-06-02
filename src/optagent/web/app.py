@@ -659,6 +659,7 @@ def _tab_screen(lang: str = "en") -> None:
             [
                 {
                     "Ticker": p.get("ticker"),
+                    t("screen.col_direction", lang): p.get("direction"),
                     t("screen.col_resonance", lang): p.get("resonance"),
                     t("screen.col_score", lang): p.get("combined_score"),
                     t("screen.col_support", lang): ", ".join(p.get("supporting") or []),

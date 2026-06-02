@@ -183,6 +183,7 @@ _TABLE: dict[str, dict[str, str]] = {
         "zh": "确定性排序:多策略共振优先,再看综合归一化得分。LLM 只负责解释这个排名,不参与排序。",
     },
     "screen.col_resonance": {"en": "Strategies agreeing", "zh": "共振策略数"},
+    "screen.col_direction": {"en": "Direction", "zh": "方向"},
     "screen.col_support": {"en": "Supporting strategies", "zh": "支持策略"},
     "screen.col_score": {"en": "Combined score", "zh": "综合得分"},
     "screen.drill_ml": {"en": "ML signal", "zh": "ML 信号"},

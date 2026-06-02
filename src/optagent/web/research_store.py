@@ -206,6 +206,32 @@ def _wrap_bounded(body: str, max_chars: int) -> str:
     return f"{_OPEN}\n{body}\n{_CLOSE}"
 
 
+def pack_sections(sections: Sequence[tuple[str, Sequence[str]]], max_chars: int) -> str:
+    """Wrap titled sections in ONE `<analysis_context>`, giving each section an
+    equal share of the budget so no section is truncated away.
+
+    `sections` is a list of (title_line, body_lines). Section bodies are assumed
+    already neutralized (callers escape untrusted fields). Each section is
+    truncated to its own per-section budget, so a verbose early section can
+    never starve later sections.
+    """
+
+    overhead = len(_OPEN) + len(_CLOSE) + 2
+    if max_chars < overhead:
+        raise ValueError(f"max_chars={max_chars} too small for a valid wrapped block")
+    budget = max_chars - overhead
+    active = [s for s in sections if s] or [("", [])]
+    per = max(40, budget // len(active))
+    marker = "\n…(truncated)"
+    parts: list[str] = []
+    for title, body in active:
+        text = "\n".join([title, *list(body)])
+        if len(text) > per:
+            text = text[: per - len(marker)] + marker if per > len(marker) else text[:per]
+        parts.append(text)
+    return _wrap_bounded("\n".join(parts), max_chars)
+
+
 def serialize_bundle(bundle: Mapping[str, Any] | None, *, max_chars: int = MAX_CONTEXT_CHARS) -> str:
     """One bounded, sanitized, single-wrapper serializer for an arbitrary dict.
 
@@ -596,11 +622,6 @@ def build_context(
     na = "无数据" if zh else "not available"
     stale_tag = " [stale]"
 
-    lines: list[str] = []
-    # Verbose per-signal screen detail is deferred to the END so that the
-    # compact summary of EVERY section (screen picks, analysis, ML, ledger)
-    # survives — only this trailing detail is sacrificed when the char cap hits.
-    detail_lines: list[str] = []
     store = store or {}
 
     def section(title_en: str, title_zh: str) -> str:
@@ -615,54 +636,62 @@ def build_context(
         prefix = f"{label}: " if label else ""
         return f"{prefix}{na} (computed_at={ca}{tag})"
 
+    # Each section builds its OWN body list; pack_sections then gives every
+    # section an equal share of the char budget, so a verbose early section can
+    # never truncate a later section away. Verbose per-signal screen detail is
+    # its own (lowest-value) section.
+    screen_body: list[str] = []
+    detail_body: list[str] = []
+    analysis_body: list[str] = []
+    ml_body: list[str] = []
+    ledger_body: list[str] = []
+
     # --- Screen ---
     screen = store.get("screen")
-    lines.append(section("## Market screen", "## 市场筛选"))
     if not screen:
-        lines.append(missing)
+        screen_body.append(missing)
     elif not screen.get("available"):
-        lines.append(unavailable_line(screen))
+        screen_body.append(unavailable_line(screen))
     else:
         tag = stale_tag if _is_stale_for_grounding(screen, now_iso, max_age_s) else ""
-        lines.append(f"computed_at: {escape_untrusted(screen.get('computed_at'))}{tag}")
+        screen_body.append(f"computed_at: {escape_untrusted(screen.get('computed_at'))}{tag}")
         syn = screen.get("synthesis") or []
         if syn:
-            lines.append(section("Top cross-strategy picks:", "跨策略最佳候选:"))
+            screen_body.append(section("Top cross-strategy picks:", "跨策略最佳候选:"))
             for p in syn[:5]:
                 sup = ",".join(escape_untrusted(s) for s in (p.get("supporting") or []))
-                lines.append(
+                screen_body.append(
                     f"  - {escape_untrusted(p.get('ticker'))} "
+                    f"dir={escape_untrusted(p.get('direction'))} "
                     f"resonance={escape_untrusted(p.get('resonance'))} "
                     f"score={escape_untrusted(p.get('combined_score'))} "
                     f"strategies=[{sup}]"
                 )
-        # Compact per-strategy summary (always kept).
         for sid, sres in (screen.get("strategies") or {}).items():
             if sres.get("error"):
-                lines.append(f"  [{escape_untrusted(sid)}] error: {escape_untrusted(sres.get('error'))}")
+                screen_body.append(f"  [{escape_untrusted(sid)}] error: {escape_untrusted(sres.get('error'))}")
                 continue
             stale_set = set(sres.get("stale_tickers") or [])
+            stale_sorted = sorted(stale_set)  # deterministic legend (not hash order)
             tickers = ",".join(
                 escape_untrusted(s.get("ticker")) + ("*" if s.get("ticker") in stale_set else "")
                 for s in (sres.get("signals") or [])[:8]
             )
-            lines.append(
+            screen_body.append(
                 f"  [{escape_untrusted(sid)}] triggered={escape_untrusted(sres.get('n_triggered'))} "
                 f"top=[{tickers}]"
-                + (f" (*=stale: {','.join(escape_untrusted(x) for x in list(stale_set)[:8])})" if stale_set else "")
+                + (f" (*=stale: {','.join(escape_untrusted(x) for x in stale_sorted[:8])})" if stale_set else "")
             )
-            # Verbose per-signal evidence -> deferred detail section.
             for s in (sres.get("signals") or [])[:6]:
                 notes = "; ".join(escape_untrusted(n) for n in (s.get("notes") or [])[:2])
                 cond = _curate_conditions(s.get("conditions"), 12)
                 cond_str = ", ".join(
-                    f"{escape_untrusted(k)}={escape_untrusted(v)}"
-                    for k, v in cond.items()
+                    f"{escape_untrusted(k)}={escape_untrusted(v)}" for k, v in cond.items()
                 )
                 reward = _as_mapping(s.get("reward"))
                 tgt = reward.get("target_price")
                 st_mark = stale_tag if s.get("ticker") in stale_set else ""
-                detail_lines.append(
+                detail_body.append(
                     f"  [{escape_untrusted(sid)}] {escape_untrusted(s.get('ticker'))}{st_mark} "
                     f"dir={escape_untrusted(s.get('direction'))} "
                     f"score={escape_untrusted(s.get('score'))}"
@@ -672,44 +701,36 @@ def build_context(
                 )
 
     # --- Analysis (per ticker) — newest-first; unavailable shown explicitly ---
-    lines.append(section("## Single-stock analysis", "## 单股票分析"))
     analysis = _newest_first(store.get("analysis") or {})
     if not analysis:
-        lines.append(missing)
+        analysis_body.append(missing)
     else:
         for ticker, snap in analysis[:5]:
             tag = stale_tag if _is_stale_for_grounding(snap, now_iso, max_age_s) else ""
             ca = escape_untrusted(snap.get("computed_at"))
             if not snap.get("available"):
-                lines.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
+                analysis_body.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
                 continue
             v = snap.get("verdict") if isinstance(snap.get("verdict"), Mapping) else {}
             conv = v.get("conviction")
-            lines.append(
+            analysis_body.append(
                 f"  {escape_untrusted(ticker)}: verdict={escape_untrusted(v.get('action'))} "
                 f"skip_reason={escape_untrusted(v.get('skip_reason'))} "
                 f"conviction={escape_untrusted(conv)} computed_at={ca}{tag}"
             )
-            # The run inputs (horizon / max-loss budget) so chat can relate the
-            # verdict to the chosen horizon and loss budget.
             inp = _as_mapping(snap.get("inputs"))
             if inp:
-                hz = inp.get("horizon_days")
-                ml_budget = inp.get("max_loss_usd")
-                lines.append(
-                    f"      inputs: horizon_days={escape_untrusted(hz)} "
-                    f"max_loss_usd={escape_untrusted(ml_budget)}"
+                analysis_body.append(
+                    f"      inputs: horizon_days={escape_untrusted(inp.get('horizon_days'))} "
+                    f"max_loss_usd={escape_untrusted(inp.get('max_loss_usd'))}"
                 )
-            # A bounded subset of the verdict rationale so chat can answer
-            # "why this verdict".
             reasons = _compact_seq(v.get("primary_reasons"), 2)
             if reasons:
-                joined = "; ".join(escape_untrusted(r) for r in reasons)
-                lines.append(f"      reasons: {joined}")
-            # Per-candidate metrics (strike / mid / delta / breakeven / max-loss)
-            # so chat can answer questions about the contract numbers.
+                analysis_body.append(
+                    f"      reasons: {'; '.join(escape_untrusted(r) for r in reasons)}"
+                )
             for c in (snap.get("candidates") or [])[:3]:
-                lines.append(
+                analysis_body.append(
                     f"      {escape_untrusted(_field(c, 'occ_symbol'))} "
                     f"{escape_untrusted(_field(c, 'right'))} "
                     f"K={escape_untrusted(_field(c, 'strike'))} "
@@ -721,41 +742,37 @@ def build_context(
                     f"oi={escape_untrusted(_field(c, 'oi'))} "
                     f"liq={escape_untrusted(_field(c, 'liquidity_score'))}"
                 )
-            # Per-envelope status so chat can cite envelope ids / delays /
-            # warnings (the system prompt asks the model to cite envelope ids).
             for e in (snap.get("sources") or [])[:6]:
                 warns = "; ".join(escape_untrusted(w) for w in (_field(e, "warnings") or []))
-                lines.append(
+                analysis_body.append(
                     f"      [{escape_untrusted(_field(e, 'tool_call_id'))}] "
                     f"{escape_untrusted(_field(e, 'source'))} "
                     f"conf={escape_untrusted(_field(e, 'confidence'))} "
-                    f"delay={escape_untrusted(_field(e, 'delay_assumption'))}"
+                    f"delay={escape_untrusted(_field(e, 'delay_assumption'))} "
+                    f"as_of={escape_untrusted(_field(e, 'as_of'))}"
                     + (f" warnings=[{warns}]" if warns else "")
                 )
 
     # --- ML (per ticker) — newest-first; unavailable shown explicitly ---
-    lines.append(section("## ML direction signal", "## ML 方向信号"))
     ml = _newest_first(store.get("ml") or {})
     if not ml:
-        lines.append(missing)
+        ml_body.append(missing)
     else:
         for ticker, snap in ml[:5]:
             tag = stale_tag if _is_stale_for_grounding(snap, now_iso, max_age_s) else ""
             ca = escape_untrusted(snap.get("computed_at"))
             if not snap.get("available"):
-                lines.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
+                ml_body.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
                 continue
             sig = snap.get("signal") if isinstance(snap.get("signal"), Mapping) else {}
             wl = sig.get("wilson_ci_lower")
             wu = sig.get("wilson_ci_upper")
-            lines.append(
+            ml_body.append(
                 f"  {escape_untrusted(ticker)}: prob_up={escape_untrusted(sig.get('prob_up'))} "
                 f"class={escape_untrusted(sig.get('class_label'))} "
                 f"credibility={escape_untrusted(sig.get('credibility'))} computed_at={ca}{tag}"
             )
-            # Bounded credibility evidence so chat can explain the reported
-            # credibility from grounded values (matches the gauge).
-            lines.append(
+            ml_body.append(
                 f"      oos_acc={escape_untrusted(sig.get('oos_accuracy'))} "
                 f"wilson95=[{escape_untrusted(wl)},{escape_untrusted(wu)}] "
                 f"baseline={escape_untrusted(sig.get('class_baseline_accuracy'))} "
@@ -763,29 +780,30 @@ def build_context(
             )
 
     # --- Ledger ---
-    lines.append(section("## Audit ledger", "## 审计账本"))
     ledger = store.get("ledger")
     if not ledger:
-        lines.append(missing)
+        ledger_body.append(missing)
     elif not ledger.get("available"):
-        lines.append(unavailable_line(ledger))
+        ledger_body.append(unavailable_line(ledger))
     else:
         tag = stale_tag if _is_stale_for_grounding(ledger, now_iso, max_age_s) else ""
         counts = ", ".join(
             f"{escape_untrusted(k)}={escape_untrusted(v)}"
             for k, v in (ledger.get("action_counts") or {}).items()
         )
-        lines.append(
+        ledger_body.append(
             f"rows={escape_untrusted(ledger.get('n_rows'))} "
             f"computed_at={escape_untrusted(ledger.get('computed_at'))}{tag} verdicts: {counts}"
         )
 
-    # Verbose screen per-signal detail goes LAST so it is the only thing the
-    # char cap can drop — every section's compact summary above is preserved.
-    if detail_lines:
-        lines.append(section("## Screen detail (per-strategy signals)", "## 筛选明细(各策略信号)"))
-        lines.extend(detail_lines)
-
-    # Bound the whole block while keeping the wrapper well-formed (raises if the
-    # cap is too small to hold even an empty wrapped block).
-    return _wrap_bounded("\n".join(lines), max_chars)
+    sections = [
+        (section("## Market screen", "## 市场筛选"), screen_body),
+        (section("## Single-stock analysis", "## 单股票分析"), analysis_body),
+        (section("## ML direction signal", "## ML 方向信号"), ml_body),
+        (section("## Audit ledger", "## 审计账本"), ledger_body),
+    ]
+    if detail_body:
+        sections.append(
+            (section("## Screen detail (per-strategy signals)", "## 筛选明细(各策略信号)"), detail_body)
+        )
+    return pack_sections(sections, max_chars)

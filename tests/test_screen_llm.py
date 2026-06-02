@@ -93,6 +93,6 @@ def test_explain_screen_passes_snapshot_as_context(monkeypatch):
     # Snapshot is passed as a pre-escaped grounding context_block; history empty.
     assert captured["context_bundle"] is None
     assert "<analysis_context>" in captured["context_block"]
-    assert '"kind"' in captured["context_block"]
+    assert captured["context_block"].rstrip().endswith("</analysis_context>")
     assert captured["history"] == []
     assert captured["lang"] == "zh"

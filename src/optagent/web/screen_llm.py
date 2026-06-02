@@ -18,40 +18,20 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from .chat import chat_complete
-from .research_store import serialize_bundle
+from .research_store import (
+    _as_mapping,
+    _compact_seq,
+    _curate_conditions,
+    _field,
+    escape_untrusted,
+    pack_sections,
+)
 
 
 # Cap on the serialized snapshot grounding (chars). Keeps the opt-in
 # explanation prompt bounded regardless of how large a screen run was.
 _CONTEXT_CAP = 8000
-# Max detailed signals retained PER STRATEGY in the explanation context, so a
-# multi-strategy snapshot can't let later strategies fall off the end of the
-# single truncated JSON blob.
-_SIGNALS_PER_STRATEGY = 4
 
-
-def _budget_per_strategy(screen_snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Return a shallow copy of the screen snapshot with each strategy's signal
-    list capped, so every selected strategy is represented in the bounded
-    explanation context (not just the first few before the char cap)."""
-
-    if not isinstance(screen_snapshot, Mapping):
-        return dict(screen_snapshot or {})
-    snap = dict(screen_snapshot)
-    strategies = snap.get("strategies")
-    if isinstance(strategies, Mapping):
-        capped = {}
-        for sid, sres in strategies.items():
-            if isinstance(sres, Mapping):
-                s2 = dict(sres)
-                sigs = s2.get("signals")
-                if isinstance(sigs, list):
-                    s2["signals"] = sigs[:_SIGNALS_PER_STRATEGY]
-                capped[sid] = s2
-            else:
-                capped[sid] = sres
-        snap["strategies"] = capped
-    return snap
 
 _EXPLAIN_EN = (
     "Explain this market-screen result as research commentary (NOT advice). "
@@ -84,15 +64,65 @@ def build_explain_message(lang: str = "en") -> str:
 
 
 def build_snapshot_context_block(screen_snapshot: Mapping[str, Any] | None) -> str:
-    """Serialize a screen snapshot into an injection-safe `<analysis_context>`
-    block. Angle brackets in the JSON are neutralized so untrusted ticker /
-    note text cannot close the delimiter or inject a pseudo-tag.
+    """Render a screen snapshot into an injection-safe, per-strategy-budgeted
+    `<analysis_context>` block.
+
+    Each strategy gets its OWN section via `pack_sections`, so every selected
+    strategy receives a guaranteed share of the char budget and none can fall
+    off the end of a single truncated blob. All embedded fields are escaped, so
+    untrusted ticker/note text cannot break the delimiter or inject phrases.
     """
 
-    # Cap detail per strategy FIRST so every selected strategy survives the
-    # char cap, then run the centralized bounded + sanitized serializer
-    # (neutralizes angle brackets + semantic injection; one well-formed wrapper).
-    return serialize_bundle(_budget_per_strategy(screen_snapshot), max_chars=_CONTEXT_CAP)
+    snap = _as_mapping(screen_snapshot)
+    sections: list[tuple[str, list[str]]] = []
+
+    syn = _compact_seq(snap.get("synthesis"), 10)
+    if syn:
+        sections.append((
+            "## Top cross-strategy picks",
+            [
+                f"- {escape_untrusted(_field(p, 'ticker'))} "
+                f"dir={escape_untrusted(_field(p, 'direction'))} "
+                f"resonance={escape_untrusted(_field(p, 'resonance'))} "
+                f"score={escape_untrusted(_field(p, 'combined_score'))} "
+                f"strategies=[{','.join(escape_untrusted(s) for s in (_field(p, 'supporting') or []))}]"
+                for p in syn
+            ],
+        ))
+
+    strategies = _as_mapping(snap.get("strategies"))
+    for sid, sres in strategies.items():
+        body: list[str] = []
+        if _field(sres, "error"):
+            body.append(f"error: {escape_untrusted(_field(sres, 'error'))}")
+        else:
+            body.append(
+                f"triggered={escape_untrusted(_field(sres, 'n_triggered'))} "
+                f"evaluated={escape_untrusted(_field(sres, 'n_evaluated'))}"
+            )
+            stale_set = set(_compact_seq(_field(sres, "stale_tickers"), 1000))
+            for s in _compact_seq(_field(sres, "signals"), 8):
+                cond = _curate_conditions(_field(s, "conditions"), 12)
+                cond_str = ", ".join(
+                    f"{escape_untrusted(k)}={escape_untrusted(v)}" for k, v in cond.items()
+                )
+                notes = "; ".join(escape_untrusted(n) for n in _compact_seq(_field(s, "notes"), 2))
+                reward = _as_mapping(_field(s, "reward"))
+                tgt = reward.get("target_price")
+                st = " [stale]" if _field(s, "ticker") in stale_set else ""
+                body.append(
+                    f"- {escape_untrusted(_field(s, 'ticker'))}{st} "
+                    f"dir={escape_untrusted(_field(s, 'direction'))} "
+                    f"score={escape_untrusted(_field(s, 'score'))}"
+                    + (f" target={escape_untrusted(tgt)}" if tgt is not None else "")
+                    + (f" conditions=[{cond_str}]" if cond_str else "")
+                    + (f" notes=[{notes}]" if notes else "")
+                )
+        sections.append((f"## strategy {escape_untrusted(sid)}", body))
+
+    if not sections:
+        sections = [("## Market screen", ["(not available)"])]
+    return pack_sections(sections, _CONTEXT_CAP)
 
 
 def explain_screen(

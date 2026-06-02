@@ -179,6 +179,25 @@ def test_failed_ml_enabled_analysis_overwrites_stale_ml_snapshot(monkeypatch):
     assert snap is not None and snap["available"] is False  # overwritten as unavailable
 
 
+def test_synthesis_table_shows_direction_column():
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["last_screen"] = {
+        "results": {"s1": {"error": None, "n_triggered": 1, "signals": []}},
+        "synthesis": [{"ticker": "AAPL", "direction": "long_call_observation",
+                       "resonance": 1, "combined_score": 1.0, "supporting": ["s1"]}],
+    }
+    at.run()
+    assert not at.exception, f"render raised: {at.exception}"
+    # The top-picks dataframe carries the localized Direction column.
+    cols = []
+    for d in at.dataframe:
+        try:
+            cols.extend(list(d.value.columns))
+        except Exception:
+            pass
+    assert "方向" in cols  # zh default Direction column
+
+
 def test_empty_synthesis_with_triggers_shows_filtered_not_zero():
     # synthesis empty but a strategy triggered tickers (e.g. all stale-filtered):
     # the UI must NOT claim "no tickers triggered".
