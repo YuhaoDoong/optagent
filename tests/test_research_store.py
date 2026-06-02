@@ -515,6 +515,26 @@ def test_screen_snapshot_retains_detail_for_synthesized_picks():
     assert deep["notes"] == ["deep evidence"]
 
 
+def test_screen_snapshot_promotes_synth_pick_diagnostics_before_caps():
+    # A synthesized winner ranked beyond the top-10 must appear within the first
+    # few per-strategy rows so the [:6]/[:4] downstream caps keep its evidence.
+    sigs = [{"ticker": f"L{i}", "direction": "d", "score": 10 - i,
+             "daily": {"conditions": {"rsi_14": 50}}} for i in range(11)]
+    sigs.append({"ticker": "WINNER", "direction": "long_call_observation", "score": 0.1,
+                 "notes": ["resonance pick"], "daily": {"conditions": {"broke_out": True}}})
+    snap = rs.screen_snapshot(
+        {"s1": {"error": None, "n_triggered": 12, "signals": sigs}},
+        [{"ticker": "WINNER", "resonance": 2, "combined_score": 1.0, "supporting": ["s1"]}],
+        "t",
+    )
+    proj = snap["strategies"]["s1"]["signals"]
+    assert proj[0]["ticker"] == "WINNER"  # promoted to front
+    # And it survives the chat-grounding [:6] slice with its conditions.
+    store = rs.init_store(); store["screen"] = snap
+    ctx = rs.build_context(store, "en")
+    assert "WINNER" in ctx and "broke_out=" in ctx
+
+
 def test_build_context_retains_envelope_status_for_analysis():
     store = rs.init_store()
     store["analysis"]["AAPL"] = rs.analysis_snapshot(

@@ -145,6 +145,40 @@ def test_non_empty_ledger_writes_available_snapshot(monkeypatch):
     assert led["inputs"].get("days_back") is not None
 
 
+def test_failed_ml_enabled_analysis_overwrites_stale_ml_snapshot(monkeypatch):
+    # ML enabled + analyze returns no ml_signal must overwrite a prior
+    # successful ML snapshot with an unavailable one (no stale ML in chat).
+    class _FakeVerdict:
+        def model_dump(self, mode="json"):
+            return {"action": "SKIP", "skip_reason": "x"}
+
+    class _FakeResult:
+        verdict = _FakeVerdict()
+        screener_candidates = []
+        envelopes = []
+        ml_signal = None  # ML produced nothing
+        memo = "memo"
+
+    monkeypatch.setattr("optagent.orchestrator.analyze", lambda *a, **k: _FakeResult())
+
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["active_view"] = "analyze"
+    at.session_state["view_radio"] = "analyze"
+    at.session_state["sidebar_enable_ml"] = True  # ML enabled (keyed checkbox)
+    # Pre-seed a stale successful ML snapshot for the same ticker.
+    from optagent.web import research_store as _rs
+    at.session_state["research_store"] = _rs.init_store()
+    at.session_state["research_store"]["ml"]["AAPL"] = _rs.ml_snapshot(
+        "AAPL", {"prob_up": 0.9, "credibility": "high"}, "2026-06-01T00:00:00"
+    )
+    # Force a single auto-run of Analyze for AAPL via the one-shot drill-down.
+    at.session_state["analyze_ticker"] = "AAPL"
+    at.session_state["pending_drilldown"] = {"ticker": "AAPL", "target": "analyze"}
+    at.run()
+    snap = at.session_state["research_store"]["ml"].get("AAPL")
+    assert snap is not None and snap["available"] is False  # overwritten as unavailable
+
+
 def test_empty_synthesis_with_triggers_shows_filtered_not_zero():
     # synthesis empty but a strategy triggered tickers (e.g. all stale-filtered):
     # the UI must NOT claim "no tickers triggered".

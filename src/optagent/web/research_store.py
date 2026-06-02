@@ -324,19 +324,19 @@ def screen_snapshot(
         stale_tickers = _compact_seq(_field(res, "stale_tickers"), 1000)
         any_stale = any_stale or bool(stale_tickers)
         all_sigs = _compact_seq(_field(res, "signals"), 100000)
-        leaders = all_sigs[:10]
-        seen = {id(x) for x in leaders}
-        # Append beyond-top-10 rows for synthesized-pick tickers (bounded).
-        extra = [
-            s for s in all_sigs[10:]
-            if id(s) not in seen and _field(s, "ticker") in synth_tickers
-        ][:10]
+        # Put synthesized-pick rows FIRST (wherever they rank) so they survive
+        # the downstream per-consumer detail caps (build_context [:6],
+        # _budget_per_strategy [:4]); fill the rest with the top-10 leaders.
+        synth_rows = [s for s in all_sigs if _field(s, "ticker") in synth_tickers][:10]
+        synth_ids = {id(s) for s in synth_rows}
+        others = [s for s in all_sigs[:10] if id(s) not in synth_ids]
+        ordered = synth_rows + others
         strategies[str(sid)] = json_safe(
             {
                 "error": _field(res, "error"),
                 "n_triggered": _field(res, "n_triggered"),
                 "n_evaluated": _field(res, "n_evaluated"),
-                "signals": [_project(s) for s in leaders + extra],
+                "signals": [_project(s) for s in ordered],
                 "stale_tickers": stale_tickers,
             }
         )

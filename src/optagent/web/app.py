@@ -207,7 +207,7 @@ def _sidebar() -> dict[str, Any]:
         index=0,
         disabled=not enable_llm,
     )
-    enable_ml = st.sidebar.checkbox(t("sidebar.enable_ml", lang), value=False)
+    enable_ml = st.sidebar.checkbox(t("sidebar.enable_ml", lang), value=False, key="sidebar_enable_ml")
     use_moomoo = st.sidebar.checkbox(
         t("sidebar.use_moomoo", lang), value=True, help=t("sidebar.moomoo_help", lang)
     )
@@ -368,6 +368,10 @@ def _tab_analyze(sidebar_opts: dict[str, Any]) -> None:
     )
     if result.ml_signal:
         store["ml"][ticker] = rs.ml_snapshot(ticker, dict(result.ml_signal), _now_iso())
+    elif ml_adapter is not None:
+        # ML was enabled but produced no result — overwrite any stale successful
+        # ML snapshot so the chat panel doesn't present outdated ML data.
+        store["ml"][ticker] = rs.ml_snapshot(ticker, None, _now_iso())
     store["active_ticker"] = ticker
 
     _verdict_card(verdict_badge(result.verdict))
