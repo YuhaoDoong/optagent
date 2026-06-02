@@ -24,6 +24,34 @@ from .research_store import serialize_bundle
 # Cap on the serialized snapshot grounding (chars). Keeps the opt-in
 # explanation prompt bounded regardless of how large a screen run was.
 _CONTEXT_CAP = 8000
+# Max detailed signals retained PER STRATEGY in the explanation context, so a
+# multi-strategy snapshot can't let later strategies fall off the end of the
+# single truncated JSON blob.
+_SIGNALS_PER_STRATEGY = 4
+
+
+def _budget_per_strategy(screen_snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return a shallow copy of the screen snapshot with each strategy's signal
+    list capped, so every selected strategy is represented in the bounded
+    explanation context (not just the first few before the char cap)."""
+
+    if not isinstance(screen_snapshot, Mapping):
+        return dict(screen_snapshot or {})
+    snap = dict(screen_snapshot)
+    strategies = snap.get("strategies")
+    if isinstance(strategies, Mapping):
+        capped = {}
+        for sid, sres in strategies.items():
+            if isinstance(sres, Mapping):
+                s2 = dict(sres)
+                sigs = s2.get("signals")
+                if isinstance(sigs, list):
+                    s2["signals"] = sigs[:_SIGNALS_PER_STRATEGY]
+                capped[sid] = s2
+            else:
+                capped[sid] = sres
+        snap["strategies"] = capped
+    return snap
 
 _EXPLAIN_EN = (
     "Explain this market-screen result as research commentary (NOT advice). "
@@ -61,9 +89,10 @@ def build_snapshot_context_block(screen_snapshot: Mapping[str, Any] | None) -> s
     note text cannot close the delimiter or inject a pseudo-tag.
     """
 
-    # Centralized bounded + sanitized serializer: neutralizes angle brackets
-    # AND semantic injection phrases, and guarantees one well-formed wrapper.
-    return serialize_bundle(screen_snapshot, max_chars=_CONTEXT_CAP)
+    # Cap detail per strategy FIRST so every selected strategy survives the
+    # char cap, then run the centralized bounded + sanitized serializer
+    # (neutralizes angle brackets + semantic injection; one well-formed wrapper).
+    return serialize_bundle(_budget_per_strategy(screen_snapshot), max_chars=_CONTEXT_CAP)
 
 
 def explain_screen(

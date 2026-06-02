@@ -641,7 +641,15 @@ def _tab_screen(lang: str = "en") -> None:
     st.subheader(t("screen.synthesis_title", lang))
     st.caption(t("screen.synthesis_caption", lang))
     if not synthesis:
-        st.info(t("screen.no_synthesis", lang))
+        # Empty synthesis can mean either zero triggers OR triggers that were
+        # excluded from ranking (e.g. stale OHLCV bars). Don't mislabel the
+        # latter as "no triggers" when the per-strategy diagnostics disagree.
+        any_triggered = any(
+            (r.get("n_triggered") or 0) > 0
+            for r in results.values()
+            if isinstance(r, dict) and not r.get("error")
+        )
+        st.info(t("screen.synthesis_filtered" if any_triggered else "screen.no_synthesis", lang))
     else:
         syn_df = pd.DataFrame(
             [

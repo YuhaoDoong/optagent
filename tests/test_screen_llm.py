@@ -45,6 +45,26 @@ def test_snapshot_context_block_is_bounded():
     assert len(block) < 9000  # _CONTEXT_CAP (8000) + wrapper, well under the raw 50k
 
 
+def test_snapshot_context_block_represents_every_strategy():
+    # 5 strategies, 10 verbose signals each: every strategy id must still appear
+    # in the bounded explanation context (no late strategy truncated away).
+    strategies = {
+        f"strat_{j}": {
+            "n_triggered": 10,
+            "signals": [
+                {"ticker": f"T{j}_{i}", "direction": "d", "score": 1.0,
+                 "notes": ["n" * 80], "conditions": {"k" * 20: "v" * 80}}
+                for i in range(10)
+            ],
+        }
+        for j in range(5)
+    }
+    block = build_snapshot_context_block({"strategies": strategies})
+    assert len(block) <= 8000
+    for j in range(5):
+        assert f"strat_{j}" in block
+
+
 def test_explain_message_zh_is_chinese_and_commentary_only():
     msg = build_explain_message("zh")
     assert "研究" in msg

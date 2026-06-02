@@ -443,6 +443,30 @@ def test_screen_snapshot_keeps_trigger_diagnostics():
     assert "target=210.0" in ctx
 
 
+def test_curate_conditions_keeps_decisive_keys_first():
+    cond = {f"pad{i}": i for i in range(10)}  # filler keys inserted first
+    cond.update({"broke_out": True, "vol_expansion": True, "ema20_dev": -0.05})
+    out = rs._curate_conditions(cond, 6)
+    # Mandatory decisive checks survive the cap despite being inserted last.
+    assert "broke_out" in out
+    assert "vol_expansion" in out
+    assert "ema20_dev" in out
+
+
+def test_screen_snapshot_and_context_keep_decisive_conditions():
+    # Decisive keys (broke_down, vol_expansion, consec_down) appear AFTER filler.
+    conditions = {"x1": 1, "x2": 2, "x3": 3, "x4": 4, "x5": 5, "x6": 6}
+    conditions.update({"broke_down": True, "vol_expansion": True, "consec_down": 3})
+    sig = {"ticker": "TSLA", "direction": "long_put_observation", "score": 1.0,
+           "daily": {"conditions": conditions}, "reward": {"target_price": 100.0}}
+    snap = rs.screen_snapshot({"s1": {"error": None, "n_triggered": 1, "signals": [sig]}}, [], "t")
+    proj_cond = snap["strategies"]["s1"]["signals"][0]["conditions"]
+    assert "broke_down" in proj_cond and "vol_expansion" in proj_cond and "consec_down" in proj_cond
+    store = rs.init_store(); store["screen"] = snap
+    ctx = rs.build_context(store, "en")
+    assert "broke_down=" in ctx and "vol_expansion=" in ctx
+
+
 def test_screen_snapshot_orders_synthesis_before_strategies():
     snap = rs.screen_snapshot(
         {"s1": {"error": None, "n_triggered": 1, "signals": [{"ticker": "AAPL", "score": 1.0}]}},

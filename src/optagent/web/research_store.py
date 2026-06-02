@@ -108,6 +108,45 @@ def _as_mapping(value: Any) -> dict[str, Any]:
     return {str(k): v for k, v in value.items()} if isinstance(value, Mapping) else {}
 
 
+# Decisive trigger-condition keys across the built-in strategies (oversold
+# rebound, momentum breakout, breakdown continuation). These are preserved
+# FIRST when compacting a strategy's `conditions` so the screen explanation
+# never loses a mandatory check to an insertion-order slice.
+_DECISIVE_CONDITION_KEYS = (
+    "broke_out", "broke_down", "vol_expansion",
+    "rsi_14", "rsi_in_band", "rsi_14_pass",
+    "williams_r_14", "williams_r_14_pass",
+    "ema20_dev", "ema20_dev_pass",
+    "below_boll_lower",
+    "consec_down", "consec_down_pass",
+    "ema20_slope_pct_5d", "trend_healthy", "trend_bearish",
+    "ema20", "ema50",
+)
+
+
+def _curate_conditions(cond: Any, cap: int) -> dict[str, Any]:
+    """Bounded condition projection that keeps DECISIVE keys first.
+
+    Selects every present decisive key (in priority order) before any remaining
+    keys, then caps the total — so a strategy's mandatory trigger checks are
+    never dropped by an insertion-order slice.
+    """
+
+    m = _as_mapping(cond)
+    if not m:
+        return {}
+    out: dict[str, Any] = {}
+    for k in _DECISIVE_CONDITION_KEYS:
+        if k in m:
+            out[k] = m[k]
+    for k, v in m.items():
+        if k not in out:
+            out[k] = v
+        if len(out) >= cap:
+            break
+    return dict(list(out.items())[:cap])
+
+
 def _as_int(value: Any, default: int = 0) -> int:
     """Coerce to int; malformed/non-numeric input becomes `default`."""
 
@@ -272,7 +311,7 @@ def screen_snapshot(
             "direction": _field(s, "direction"),
             "score": _field(s, "score"),
             "notes": _compact_seq(_field(s, "notes"), 3),
-            "conditions": dict(list(_as_mapping(cond).items())[:8]),
+            "conditions": _curate_conditions(cond, 14),
             "reward": {
                 "target_price": _field(reward, "target_price"),
                 "repair_space_pct": _field(reward, "repair_space_pct"),
@@ -599,10 +638,10 @@ def build_context(
             )
             for s in (sres.get("signals") or [])[:6]:
                 notes = "; ".join(escape_untrusted(n) for n in (s.get("notes") or [])[:2])
-                cond = _as_mapping(s.get("conditions"))
+                cond = _curate_conditions(s.get("conditions"), 6)
                 cond_str = ", ".join(
                     f"{escape_untrusted(k)}={escape_untrusted(v)}"
-                    for k, v in list(cond.items())[:5]
+                    for k, v in cond.items()
                 )
                 reward = _as_mapping(s.get("reward"))
                 tgt = reward.get("target_price")

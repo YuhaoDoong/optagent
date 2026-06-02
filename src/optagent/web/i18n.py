@@ -192,6 +192,10 @@ _TABLE: dict[str, dict[str, str]] = {
     "screen.explain_title": {"en": "AI explanation (research commentary)", "zh": "AI 解释(研究性评论)"},
     "screen.run_first": {"en": "Run a screen first, then ask the AI to explain it.", "zh": "请先运行筛选,再让 AI 解释。"},
     "screen.no_synthesis": {"en": "No tickers triggered across the selected strategies.", "zh": "所选策略均未触发任何股票。"},
+    "screen.synthesis_filtered": {
+        "en": "Strategies triggered tickers, but none qualified for the cross-strategy ranking (e.g. excluded for stale OHLCV bars). See the per-strategy tables below.",
+        "zh": "策略触发了一些股票,但没有进入跨策略排名(例如因 OHLCV 数据过期被排除)。详见下方各策略表格。",
+    },
 
     # Drill-down auto-run
     "drill.autorun_note": {

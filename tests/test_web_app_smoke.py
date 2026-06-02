@@ -145,6 +145,21 @@ def test_non_empty_ledger_writes_available_snapshot(monkeypatch):
     assert led["inputs"].get("days_back") is not None
 
 
+def test_empty_synthesis_with_triggers_shows_filtered_not_zero():
+    # synthesis empty but a strategy triggered tickers (e.g. all stale-filtered):
+    # the UI must NOT claim "no tickers triggered".
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["last_screen"] = {
+        "results": {"s1": {"error": None, "n_triggered": 3, "signals": []}},
+        "synthesis": [],
+    }
+    at.run()
+    assert not at.exception, f"render raised: {at.exception}"
+    infos = " ".join(str(getattr(el, "value", el)) for el in at.info)
+    assert "没有进入跨策略排名" in infos          # the filtered message (zh default)
+    assert "均未触发任何股票" not in infos          # NOT the zero-trigger message
+
+
 def test_explain_handler_renders_error_on_provider_exception(monkeypatch):
     # A non-RuntimeError provider failure (timeout/rate-limit/APIError) must be
     # caught and rendered, not crash the Streamlit interaction.
