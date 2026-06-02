@@ -558,7 +558,14 @@ def make_openai_client(api_key: str | None = None, model: str = "gpt-4o"):
             if not tcs:
                 raise RuntimeError("OpenAI response did not include a tool call.")
             args_raw = tcs[0].function.arguments
-            tool_input = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            try:
+                tool_input = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            except (json.JSONDecodeError, TypeError) as e:
+                raise RuntimeError(
+                    "OpenAI returned malformed tool-call JSON "
+                    f"(finish_reason={choice.finish_reason}; likely truncated by "
+                    "max_output_tokens)."
+                ) from e
             return tool_input, {"finish_reason": choice.finish_reason}
 
     return _OpenAIClient()
@@ -633,7 +640,14 @@ def make_openrouter_client(api_key: str | None = None, model: str = "anthropic/c
             if not tcs:
                 raise RuntimeError("OpenRouter response did not include a tool call.")
             args_raw = tcs[0].function.arguments
-            tool_input = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            try:
+                tool_input = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            except (json.JSONDecodeError, TypeError) as e:
+                raise RuntimeError(
+                    "OpenRouter returned malformed tool-call JSON "
+                    f"(finish_reason={choice.finish_reason}; likely truncated by "
+                    "max_output_tokens)."
+                ) from e
             return tool_input, {"finish_reason": choice.finish_reason}
 
     return _OpenRouterClient()

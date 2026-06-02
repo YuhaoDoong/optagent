@@ -258,6 +258,34 @@ def test_llm_path_clean_long_call_passes_validator(tmp_path: Path):
     assert result.verdict.contract.occ_symbol == "AAPL_C200"
 
 
+def test_llm_path_synthesis_exception_fails_closed_to_skip(tmp_path: Path):
+    """A client that raises (truncated JSON, network error, SDK bug) must NOT
+    crash analyze(); it fails closed to a structured SKIP."""
+
+    from optagent.schemas import SkipReason
+
+    registry, adapter = _setup_liquid_run()
+
+    class _BoomClient:
+        def synthesise(self, *, system, user_prompt, tool, max_output_tokens, timeout_s):
+            raise RuntimeError("OpenRouter returned malformed tool-call JSON (truncated).")
+
+    result = analyze(
+        "AAPL",
+        registry=registry,
+        yfinance_adapter=adapter,
+        ledger_dir=tmp_path,
+        enable_llm=True,
+        llm_client=_BoomClient(),
+        model_version="claude-haiku-4-5",
+        price_table=_PRICE_TABLE,
+        ttl_table=_TTL_TABLE,
+    )
+    assert result.verdict.action is VerdictAction.skip
+    assert result.verdict.skip_reason is SkipReason.critical_provider_unavailable
+    assert any("synthesis failed" in r.lower() for r in result.verdict.primary_reasons)
+
+
 def test_llm_path_hallucinated_occ_is_downgraded_to_skip(tmp_path: Path):
     registry, adapter = _setup_liquid_run()
     client = _FakeLLMClient(

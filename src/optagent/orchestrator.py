@@ -635,18 +635,57 @@ def _run_llm_path(
         if env.source == "yahoo_news":
             news_excerpts.extend(news_excerpts_from_envelope(env))
 
-    # Synthesis
-    synthesis = synthesise(
-        client=llm_client,
-        disclaimer=DISCLAIMER,
-        ticker=ticker,
-        spot=spot,
-        candidates=screener_output.candidates,
-        envelopes=envelopes,
-        news_excerpts=news_excerpts or None,
-        ml_signal=ml_signal.to_dict() if ml_signal is not None else None,
-        max_output_tokens=budget.max_output_tokens,
-    )
+    # Synthesis. The LLM call is the one place a third-party can crash the
+    # pipeline (network error, truncated tool JSON, SDK exception). Per the
+    # defer-to-SKIP invariant we catch ANY exception and emit a structured
+    # SKIP rather than letting it propagate out of analyze().
+    try:
+        synthesis = synthesise(
+            client=llm_client,
+            disclaimer=DISCLAIMER,
+            ticker=ticker,
+            spot=spot,
+            candidates=screener_output.candidates,
+            envelopes=envelopes,
+            news_excerpts=news_excerpts or None,
+            ml_signal=ml_signal.to_dict() if ml_signal is not None else None,
+            max_output_tokens=budget.max_output_tokens,
+        )
+    except Exception as e:  # noqa: BLE001 — fail closed on any LLM error
+        verdict = _build_skip_verdict(
+            SkipReason.critical_provider_unavailable,
+            [
+                f"LLM synthesis failed ({type(e).__name__}: {str(e)[:160]}). The "
+                "agent fails closed to SKIP rather than guess a verdict.",
+                "Re-run; if it persists, check the provider/model, network, or "
+                "raise the output-token budget.",
+            ],
+        )
+        memo = render_template(
+            verdict, envelopes, cited_fred=_cites_fred(verdict), cited_volume_oi_context=_cites_volume_oi(verdict)
+        )
+        return _finalize(
+            run_config,
+            verdict,
+            memo,
+            envelopes,
+            screener_output=screener_output,
+            unavailable_warnings=unavailable_warnings,
+            registry=registry,
+            started_at=started_at,
+            ledger_dir=ledger_dir,
+            write_ledger=write_ledger,
+            validator_decisions=[
+                budget_decision,
+                ValidatorDecision(
+                    check_id="llm_synthesis", passed=False, detail=str(e)[:200]
+                ),
+            ],
+            budget_estimate_usd=budget.estimated_usd,
+            model_version=chosen_model,
+            price_table_version=budget.price_table_version,
+            tokenizer_version=budget.tokenizer_version,
+        )
 
     pre_render = render_template(
         synthesis.verdict, envelopes, cited_fred=_cites_fred(synthesis.verdict), cited_volume_oi_context=_cites_volume_oi(synthesis.verdict)
