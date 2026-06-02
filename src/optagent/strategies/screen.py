@@ -70,6 +70,24 @@ class ScreenResult:
     stale_bars: list[tuple[str, str, int]] = field(default_factory=list)
 
 
+def make_default_fetcher(
+    yf_module: Any | None = None,
+) -> Callable[[str], tuple[pd.DataFrame | None, dict | None]]:
+    """Public factory for the default per-ticker fetcher.
+
+    Callers running several strategies over the same universe can build ONE
+    fetcher (optionally memoized) and pass it to every `screen_universe` call so
+    each ticker's history/chain is downloaded once instead of per strategy.
+    """
+
+    if yf_module is None:
+        try:
+            import yfinance as yf_module  # type: ignore  # noqa: WPS433
+        except ImportError:
+            yf_module = None
+    return _default_fetcher(yf_module)
+
+
 def _default_fetcher(yf_module: Any | None) -> Callable[[str], tuple[pd.DataFrame | None, dict | None]]:
     """Return a function that pulls (daily OHLCV, options_chain_value) per ticker."""
 

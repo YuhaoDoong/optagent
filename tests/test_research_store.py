@@ -424,6 +424,62 @@ def test_synthesis_dominant_direction_excludes_contradictory_support():
     assert "s3" not in aapl["supporting"]               # the contradicting put excluded
 
 
+def test_screen_snapshot_keeps_trigger_diagnostics():
+    sig = {
+        "ticker": "AAPL", "direction": "long_call_observation", "score": 1.0,
+        "notes": ["observation only"],
+        "daily": {"conditions": {"rsi_14": 28.5, "williams_r_14": -92.0, "ema20_dev": -0.07}},
+        "reward": {"target_price": 210.0, "repair_space_pct": 6.2},
+    }
+    snap = rs.screen_snapshot({"s1": {"error": None, "n_triggered": 1, "signals": [sig]}},
+                              [], "t")
+    proj = snap["strategies"]["s1"]["signals"][0]
+    assert proj["conditions"]["rsi_14"] == 28.5
+    assert proj["reward"]["target_price"] == 210.0
+    # And the chat grounding surfaces them.
+    store = rs.init_store(); store["screen"] = snap
+    ctx = rs.build_context(store, "en")
+    assert "rsi_14=28.5" in ctx
+    assert "target=210.0" in ctx
+
+
+def test_screen_snapshot_orders_synthesis_before_strategies():
+    snap = rs.screen_snapshot(
+        {"s1": {"error": None, "n_triggered": 1, "signals": [{"ticker": "AAPL", "score": 1.0}]}},
+        [{"ticker": "AAPL", "resonance": 1, "combined_score": 1.0, "supporting": ["s1"]}],
+        "t",
+    )
+    keys = list(snap.keys())
+    assert keys.index("synthesis") < keys.index("strategies")
+
+
+def test_serialize_bundle_keeps_synthesis_under_truncation():
+    # A verbose multi-strategy snapshot truncated to a small cap must still
+    # carry the synthesis ranking (serialized first).
+    big_sigs = [{"ticker": f"T{i}", "direction": "d", "score": 1.0,
+                 "notes": ["n" * 60], "daily": {"conditions": {"k": "v" * 60}}} for i in range(10)]
+    snap = rs.screen_snapshot(
+        {f"s{j}": {"error": None, "n_triggered": 10, "signals": big_sigs} for j in range(6)},
+        [{"ticker": "WINNER", "resonance": 3, "combined_score": 2.5, "supporting": ["s0", "s1", "s2"]}],
+        "t",
+    )
+    block = rs.serialize_bundle(snap, max_chars=1500)
+    assert "WINNER" in block  # synthesis survived the end-truncation
+
+
+def test_analysis_snapshot_keeps_candidate_liquidity():
+    snap = rs.analysis_snapshot(
+        "AAPL", {"action": "LONG_CALL"},
+        [{"occ_symbol": "AAPL_C200", "strike": 200.0, "oi": 12000, "liquidity_score": 0.85}],
+        "2026-06-02T00:00:00",
+    )
+    assert snap["candidates"][0]["oi"] == 12000
+    assert snap["candidates"][0]["liquidity_score"] == 0.85
+    store = rs.init_store(); store["analysis"]["AAPL"] = snap
+    ctx = rs.build_context(store, "en")
+    assert "oi=12000" in ctx and "liq=0.85" in ctx
+
+
 def test_screen_snapshot_retains_detail_for_synthesized_picks():
     sigs = [{"ticker": f"L{i}", "score": 10 - i, "notes": ["x"]} for i in range(11)]
     sigs.append({"ticker": "DEEP", "score": 0.1, "notes": ["deep evidence"]})  # index 11

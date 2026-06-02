@@ -163,6 +163,42 @@ def test_explain_handler_renders_error_on_provider_exception(monkeypatch):
     assert not at.exception, f"explain handler did not catch provider error: {at.exception}"
 
 
+def test_run_multi_strategy_shares_memoized_fetcher(monkeypatch):
+    # The same fetcher must be reused across strategies and memoized per ticker
+    # so market data is downloaded once, not once per strategy.
+    base_calls = []
+
+    def fake_base(ticker):
+        base_calls.append(ticker)
+        return (None, None)
+
+    monkeypatch.setattr("optagent.strategies.screen.make_default_fetcher", lambda *a, **k: fake_base)
+    monkeypatch.setattr("optagent.strategies.get_strategy", lambda sid: object())
+
+    fetchers = []
+
+    class _Res:
+        top_signals = []
+        n_triggered = 0
+        n_evaluated = 0
+        stale_bars = []
+        top_near_misses = []
+
+    def fake_screen(strategy, universe, *, fetcher, top_n):
+        fetchers.append(fetcher)
+        for tk in universe:
+            fetcher(tk)  # each strategy "fetches" every ticker
+        return _Res()
+
+    monkeypatch.setattr("optagent.strategies.screen_universe", fake_screen)
+
+    from optagent.web.app import _run_multi_strategy
+
+    _run_multi_strategy(["s1", "s2", "s3"], ["AAPL", "MSFT"])
+    assert fetchers[0] is fetchers[1] is fetchers[2]      # one shared fetcher
+    assert sorted(base_calls) == ["AAPL", "MSFT"]          # each ticker fetched ONCE
+
+
 def test_run_multi_strategy_does_not_pretruncate_before_synthesis(monkeypatch):
     # Regression for the review [P1]: each strategy must be screened with an
     # UNBOUNDED top-N (the full universe) so synthesis sees every triggered row.
@@ -175,7 +211,7 @@ def test_run_multi_strategy_does_not_pretruncate_before_synthesis(monkeypatch):
         stale_bars = []
         top_near_misses = []
 
-    def _fake_screen(strategy, universe, top_n):
+    def _fake_screen(strategy, universe, *, fetcher=None, top_n):
         captured["top_n"] = top_n
         return _Res()
 

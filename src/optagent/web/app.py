@@ -546,13 +546,25 @@ def _run_multi_strategy(strategy_ids: list[str], universe: list[str]):
     """
 
     from optagent.strategies import get_strategy, screen_universe
+    from optagent.strategies.screen import make_default_fetcher
 
     full_n = max(len(universe), 1)  # never truncate triggered rows pre-synthesis
+
+    # Build ONE fetcher, memoized per ticker, and share it across every
+    # strategy so the same Yahoo history/chain is downloaded once — not once
+    # per strategy (which tripled traffic + rate-limit risk for 3 built-ins).
+    _base_fetcher = make_default_fetcher()
+    _cache: dict[str, Any] = {}
+
+    def shared_fetcher(ticker: str):
+        if ticker not in _cache:
+            _cache[ticker] = _base_fetcher(ticker)
+        return _cache[ticker]
 
     def run_one(sid: str) -> dict[str, Any]:
         if not universe:
             return {"error": "empty_universe", "signals": []}
-        res = screen_universe(get_strategy(sid), universe, top_n=full_n)
+        res = screen_universe(get_strategy(sid), universe, fetcher=shared_fetcher, top_n=full_n)
         return {
             "error": None,
             "signals": [_signal_to_dict(s) for s in res.top_signals],

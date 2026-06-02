@@ -261,11 +261,22 @@ def screen_snapshot(
     }
 
     def _project(s: Any) -> dict[str, Any]:
+        # Bounded trigger evidence so explain_screen / chat can say WHY a ticker
+        # fired (the built-in strategies put it in daily.conditions + reward,
+        # while the note is just a generic observation-only line).
+        daily = _field(s, "daily")
+        cond = _field(daily, "conditions") if isinstance(daily, Mapping) else None
+        reward = _field(s, "reward")
         return {
             "ticker": _field(s, "ticker"),
             "direction": _field(s, "direction"),
             "score": _field(s, "score"),
             "notes": _compact_seq(_field(s, "notes"), 3),
+            "conditions": dict(list(_as_mapping(cond).items())[:8]),
+            "reward": {
+                "target_price": _field(reward, "target_price"),
+                "repair_space_pct": _field(reward, "repair_space_pct"),
+            },
         }
 
     strategies = {}
@@ -292,8 +303,11 @@ def screen_snapshot(
         )
     snap = _base_snapshot("screen", computed_at, available=True, stale=any_stale)
     snap["inputs"] = json_safe(_as_mapping(inputs))
-    snap["strategies"] = strategies
+    # `synthesis` is serialized BEFORE the verbose `strategies` block so the
+    # deterministic ranking survives end-truncation when serialize_bundle hits
+    # the explanation char cap.
     snap["synthesis"] = json_safe(_compact_seq(synthesis, 1000))
+    snap["strategies"] = strategies
     return snap
 
 
@@ -324,6 +338,8 @@ def analysis_snapshot(
                 "iv": _field(c, "iv"),
                 "breakeven": _field(c, "breakeven"),
                 "max_loss": _field(c, "max_loss"),
+                "oi": _field(c, "oi"),
+                "liquidity_score": _field(c, "liquidity_score"),
             }
             for c in _compact_seq(candidates, 8)
         ]
@@ -583,10 +599,19 @@ def build_context(
             )
             for s in (sres.get("signals") or [])[:6]:
                 notes = "; ".join(escape_untrusted(n) for n in (s.get("notes") or [])[:2])
+                cond = _as_mapping(s.get("conditions"))
+                cond_str = ", ".join(
+                    f"{escape_untrusted(k)}={escape_untrusted(v)}"
+                    for k, v in list(cond.items())[:5]
+                )
+                reward = _as_mapping(s.get("reward"))
+                tgt = reward.get("target_price")
                 lines.append(
                     f"    - {escape_untrusted(s.get('ticker'))} "
                     f"dir={escape_untrusted(s.get('direction'))} "
                     f"score={escape_untrusted(s.get('score'))}"
+                    + (f" target={escape_untrusted(tgt)}" if tgt is not None else "")
+                    + (f" conditions=[{cond_str}]" if cond_str else "")
                     + (f" notes=[{notes}]" if notes else "")
                 )
 
@@ -626,7 +651,9 @@ def build_context(
                     f"delta={escape_untrusted(_field(c, 'delta'))} "
                     f"iv={escape_untrusted(_field(c, 'iv'))} "
                     f"BE={escape_untrusted(_field(c, 'breakeven'))} "
-                    f"maxloss={escape_untrusted(_field(c, 'max_loss'))}"
+                    f"maxloss={escape_untrusted(_field(c, 'max_loss'))} "
+                    f"oi={escape_untrusted(_field(c, 'oi'))} "
+                    f"liq={escape_untrusted(_field(c, 'liquidity_score'))}"
                 )
             # Per-envelope status so chat can cite envelope ids / delays /
             # warnings (the system prompt asks the model to cite envelope ids).
