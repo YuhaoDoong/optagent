@@ -259,10 +259,12 @@ def chat_complete(
 ) -> str:
     """Run one chat turn; return the assistant's plain-text reply.
 
-    `context_block`, when provided, is used verbatim as the grounding block
-    (already-wrapped `<analysis_context>` text) instead of JSON-serializing
-    `context_bundle`. This lets callers supply a richer, escaped, truncated
-    grounding context (see web/research_store.build_context).
+    `context_block`, when provided, supplies the grounding block (a richer
+    already-wrapped `<analysis_context>` text, e.g. web/research_store.
+    build_context) instead of JSON-serializing `context_bundle`. It is NOT
+    trusted verbatim: every block is re-canonicalized through
+    `research_store.sanitize_context_block` at the LLM boundary (body
+    neutralized + bounded + single wrapper) before dispatch.
 
     Raises RuntimeError when no provider key is available or the chosen
     provider's SDK is missing.

@@ -623,10 +623,10 @@ def _tab_screen(lang: str = "en") -> None:
         syn_df = pd.DataFrame(
             [
                 {
-                    "Ticker": p["ticker"],
-                    t("screen.col_resonance", lang): p["resonance"],
-                    t("screen.col_score", lang): p["combined_score"],
-                    t("screen.col_support", lang): ", ".join(p["supporting"]),
+                    "Ticker": p.get("ticker"),
+                    t("screen.col_resonance", lang): p.get("resonance"),
+                    t("screen.col_score", lang): p.get("combined_score"),
+                    t("screen.col_support", lang): ", ".join(p.get("supporting") or []),
                 }
                 for p in synthesis
             ]
@@ -635,9 +635,11 @@ def _tab_screen(lang: str = "en") -> None:
 
         # One-click drill-down per pick.
         for p in synthesis:
-            tk = p["ticker"]
+            tk = p.get("ticker")
+            if not tk:
+                continue
             c0, c1, c2 = st.columns([2, 1, 1])
-            c0.markdown(f"**{tk}** · {t('screen.col_resonance', lang)}={p['resonance']}")
+            c0.markdown(f"**{tk}** · {t('screen.col_resonance', lang)}={p.get('resonance')}")
             if c1.button(t("screen.drill_analyze", lang), key=f"drill_an_{tk}"):
                 _drilldown(tk, "analyze")
             if c2.button(t("screen.drill_ml", lang), key=f"drill_ml_{tk}"):

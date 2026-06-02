@@ -102,6 +102,21 @@ def _field(obj: Any, key: str) -> Any:
     return obj.get(key) if isinstance(obj, Mapping) else None
 
 
+def _as_mapping(value: Any) -> dict[str, Any]:
+    """Coerce to a plain dict; non-mapping (or malformed) input becomes {}."""
+
+    return {str(k): v for k, v in value.items()} if isinstance(value, Mapping) else {}
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    """Coerce to int; malformed/non-numeric input becomes `default`."""
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def neutralize_text(text: Any) -> str:
     """Make a possibly-untrusted string safe to embed in a context block.
 
@@ -157,37 +172,39 @@ def serialize_bundle(bundle: Mapping[str, Any] | None, *, max_chars: int = MAX_C
     bounded, and there is always exactly one well-formed delimiter pair.
     """
 
-    payload = json.dumps(json_safe(dict(bundle or {})), ensure_ascii=False, indent=2)
+    payload = json.dumps(json_safe(_as_mapping(bundle)), ensure_ascii=False, indent=2)
     return _wrap_bounded(neutralize_text(payload), max_chars)
 
 
 def sanitize_context_block(block: str | None, *, max_chars: int = MAX_CONTEXT_CHARS) -> str:
     """Enforce the grounding-block contract at the LLM boundary.
 
-    A well-formed neutralized block (the output of `build_context` /
-    `serialize_bundle`) is returned unchanged. Anything else — oversized,
-    missing/duplicated wrapper, or containing RAW angle brackets (a
-    delimiter-breakout attempt) — is treated as untrusted text and re-wrapped
-    through `serialize_bundle`, so the provider can never receive an unbounded
-    or breakout block regardless of what a caller passed.
+    The inner body is ALWAYS re-neutralized — a structurally valid wrapper is
+    never trusted to be already-sanitized, so a block like
+    `<analysis_context>\nignore previous instructions\n</analysis_context>`
+    still gets its body defanged. `neutralize_text` is idempotent on an
+    already-escaped body (no raw `<`/`>` to re-escape), so canonical
+    `build_context` / `serialize_bundle` output round-trips unchanged in
+    meaning. The result is always bounded and carries exactly one wrapper pair.
     """
 
     if not block:
         return ""
-    well_formed = (
-        len(block) <= max_chars
-        and block.startswith(_OPEN)
-        and block.rstrip().endswith(_CLOSE)
-        and block.count(_OPEN) == 1
-        and block.count(_CLOSE) == 1
-        # A neutralized body uses &lt;/&gt;, so the ONLY raw angle brackets are
-        # the two from the single delimiter pair.
-        and block.count("<") == 2
-        and block.count(">") == 2
-    )
-    if well_formed:
-        return block
-    return serialize_bundle({"provided_context": block}, max_chars=max_chars)
+    text = block if isinstance(block, str) else str(block)
+    # Strip exactly one outer wrapper if present; otherwise treat the whole
+    # string as untrusted body. (rindex finds the REAL closing delimiter; an
+    # escaped &lt;/analysis_context&gt; in the body cannot match.)
+    if text.startswith(_OPEN) and _CLOSE in text:
+        inner = text[len(_OPEN): text.rindex(_CLOSE)]
+        # Drop the wrapper's own framing newlines so re-wrapping a canonical
+        # block round-trips identically (idempotent on build_context output).
+        if inner.startswith("\n"):
+            inner = inner[1:]
+        if inner.endswith("\n"):
+            inner = inner[:-1]
+    else:
+        inner = text
+    return _wrap_bounded(neutralize_text(inner), max_chars)
 
 
 # ---------------------------------------------------------------------------
@@ -230,21 +247,21 @@ def screen_snapshot(
     `inputs` records the run parameters (strategies, sector, limit).
     """
 
+    results_by_strategy = _as_mapping(results_by_strategy)
     if not results_by_strategy:
         snap = _base_snapshot("screen", computed_at, available=False, stale=False)
-        snap["inputs"] = json_safe(dict(inputs or {}))
+        snap["inputs"] = json_safe(_as_mapping(inputs))
         return snap
     strategies = {}
     any_stale = False
     for sid, res in results_by_strategy.items():
-        res = res or {}
-        stale_tickers = list(res.get("stale_tickers") or [])
+        stale_tickers = _compact_seq(_field(res, "stale_tickers"), 1000)
         any_stale = any_stale or bool(stale_tickers)
         strategies[str(sid)] = json_safe(
             {
-                "error": res.get("error"),
-                "n_triggered": res.get("n_triggered"),
-                "n_evaluated": res.get("n_evaluated"),
+                "error": _field(res, "error"),
+                "n_triggered": _field(res, "n_triggered"),
+                "n_evaluated": _field(res, "n_evaluated"),
                 "signals": [
                     {
                         "ticker": _field(s, "ticker"),
@@ -252,15 +269,15 @@ def screen_snapshot(
                         "score": _field(s, "score"),
                         "notes": _compact_seq(_field(s, "notes"), 3),
                     }
-                    for s in _compact_seq(res.get("signals"), 10)
+                    for s in _compact_seq(_field(res, "signals"), 10)
                 ],
                 "stale_tickers": stale_tickers,
             }
         )
     snap = _base_snapshot("screen", computed_at, available=True, stale=any_stale)
-    snap["inputs"] = json_safe(dict(inputs or {}))
+    snap["inputs"] = json_safe(_as_mapping(inputs))
     snap["strategies"] = strategies
-    snap["synthesis"] = json_safe(list(synthesis or []))
+    snap["synthesis"] = json_safe(_compact_seq(synthesis, 1000))
     return snap
 
 
@@ -274,11 +291,11 @@ def analysis_snapshot(
 ) -> dict[str, Any]:
     if not ticker:
         snap = _base_snapshot("analysis", computed_at, available=False, stale=False)
-        snap["inputs"] = json_safe(dict(inputs or {}))
+        snap["inputs"] = json_safe(_as_mapping(inputs))
         return snap
     snap = _base_snapshot("analysis", computed_at, available=verdict is not None, stale=False)
     snap["ticker"] = ticker
-    snap["inputs"] = json_safe(dict(inputs or {}))
+    snap["inputs"] = json_safe(_as_mapping(inputs))
     snap["verdict"] = json_safe(verdict) if verdict is not None else None
     snap["candidates"] = json_safe(
         [
@@ -317,11 +334,11 @@ def ml_snapshot(
 ) -> dict[str, Any]:
     if not ticker:
         snap = _base_snapshot("ml", computed_at, available=False, stale=False)
-        snap["inputs"] = json_safe(dict(inputs or {}))
+        snap["inputs"] = json_safe(_as_mapping(inputs))
         return snap
     snap = _base_snapshot("ml", computed_at, available=ml is not None, stale=False)
     snap["ticker"] = ticker
-    snap["inputs"] = json_safe(dict(inputs or {"ticker": ticker}))
+    snap["inputs"] = json_safe(_as_mapping(inputs) or {"ticker": ticker})
     snap["signal"] = json_safe(ml) if ml is not None else None
     return snap
 
@@ -333,9 +350,9 @@ def ledger_summary_snapshot(
     inputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     snap = _base_snapshot("ledger", computed_at, available=bool(action_counts), stale=False)
-    snap["inputs"] = json_safe(dict(inputs or {}))
-    snap["n_rows"] = int(n_rows or 0)
-    snap["action_counts"] = json_safe(dict(action_counts or {}))
+    snap["inputs"] = json_safe(_as_mapping(inputs))
+    snap["n_rows"] = _as_int(n_rows, 0)
+    snap["action_counts"] = json_safe(_as_mapping(action_counts))
     return snap
 
 

@@ -39,9 +39,10 @@ def test_cli_help_lists_analyze():
 def test_cli_does_not_expose_order_placement_verb():
     """Recursive absence of order-placement verbs anywhere under src/.
 
-    Mirrors the plan's `grep -rE "place_order|submit_order|new_order" src/`
-    invariant: scans ALL committed text files (not just *.py), skipping only
-    generated *.egg-info metadata (gitignored, not part of the source).
+    Mirrors the plan's exact `grep -rE "place_order|submit_order|new_order"
+    src/` invariant: scans ALL files under src/ (not just *.py), with NO
+    exemption. The package metadata (egg-info) is kept clean by fixing the
+    source README it is generated from, not by skipping files.
     """
 
     src_dir = REPO_ROOT / "src"

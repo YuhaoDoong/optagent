@@ -107,6 +107,44 @@ def test_ledger_view_writes_snapshot():
     assert led is not None and "available" in led  # the view always records a snapshot
 
 
+def test_empty_universe_failed_screen_overwrites_grounding(monkeypatch):
+    # An empty sector-filtered universe must overwrite prior successful grounding.
+    # _build_universe lazily imports filter_to_sector from the source module, so
+    # patching the source there takes effect inside the AppTest-loaded script.
+    monkeypatch.setattr("optagent.strategies.filter_to_sector", lambda u, s: [])
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["last_screen"] = {"results": {}, "synthesis": []}  # stale success
+    at.run()
+    # Pick the sector selectbox (its options include the sector_any marker) and
+    # choose a real sector so the (patched) sector filter runs.
+    sector_sb = [sb for sb in at.selectbox if any("全部" in str(o) for o in sb.options)][0]
+    real_sector = [o for o in sector_sb.options if "全部" not in str(o)][0]
+    sector_sb.set_value(real_sector).run()
+    run_btn = [b for b in at.button if b.label == "运行筛选"][0]
+    run_btn.click().run()
+    assert not at.exception, f"render raised: {at.exception}"
+    screen_snap = at.session_state["research_store"]["screen"]
+    assert screen_snap is not None and screen_snap["available"] is False
+
+
+def test_non_empty_ledger_writes_available_snapshot(monkeypatch):
+    import pandas as pd
+
+    df = pd.DataFrame({"action": ["SKIP", "SKIP", "LONG_CALL"], "ticker": ["A", "B", "C"]})
+    # Patch the SOURCE (components) since the AppTest script re-imports it there.
+    monkeypatch.setattr("optagent.web.components.ledger_index", lambda *a, **k: df)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["active_view"] = "ledger"
+    at.session_state["view_radio"] = "ledger"
+    at.run()
+    assert not at.exception, f"render raised: {at.exception}"
+    led = at.session_state["research_store"]["ledger"]
+    assert led["available"] is True
+    assert led["n_rows"] == 3
+    assert led["action_counts"].get("SKIP") == 2
+    assert led["inputs"].get("days_back") is not None
+
+
 def test_ml_plain_render_does_not_call_provider(monkeypatch):
     called = {"ml": 0}
 
