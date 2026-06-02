@@ -153,8 +153,9 @@ caveats. See `src/optagent/strategies/base.py` for the canonical
 ### Bounded scope by design
 - Verdict enum is closed to `{SKIP, LONG_CALL, LONG_PUT}` — adding a variant
   requires a new pydantic model AND a new validator path.
-- `grep -rE "place_order|submit_order|new_order" src/` returns 0 matches.
-  Compile-time absence is asserted by a CI test.
+- A recursive scan for order-placement verbs under `src/` returns 0 matches;
+  compile-time absence is asserted by a CI test
+  (`tests/test_cli.py::test_cli_does_not_expose_order_placement_verb`).
 - Refuses verdicts outside the v1 enum at the CLI / API surface.
 
 ### Fail-closed validator (AC-12)

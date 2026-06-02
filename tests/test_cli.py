@@ -47,7 +47,7 @@ def test_cli_does_not_expose_order_placement_verb():
     src_dir = REPO_ROOT / "src"
     hits: list[str] = []
     for path in src_dir.rglob("*"):
-        if not path.is_file() or any(p.endswith(".egg-info") for p in path.parts):
+        if not path.is_file():
             continue
         try:
             text = path.read_text(encoding="utf-8")

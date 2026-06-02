@@ -71,6 +71,42 @@ def test_analyze_plain_render_does_not_call_provider(monkeypatch):
     assert called["analyze"] == 0
 
 
+def test_explain_button_visible_with_empty_synthesis():
+    at = AppTest.from_file(APP, default_timeout=60)
+    # A completed screen with per-strategy results but NO synthesis rows.
+    at.session_state["last_screen"] = {
+        "results": {"s1": {"error": None, "signals": [], "n_triggered": 0, "n_evaluated": 5}},
+        "synthesis": [],
+    }
+    at.run()
+    assert not at.exception, f"render raised: {at.exception}"
+    assert "🤖 让 AI 解释结果" in [b.label for b in at.button]  # default zh label
+
+
+def test_failed_screen_attempt_overwrites_grounding():
+    at = AppTest.from_file(APP, default_timeout=60)
+    # Pre-seed a stale successful screen snapshot in the store.
+    at.session_state["last_screen"] = {"results": {}, "synthesis": []}
+    at.run()
+    # Empty the strategy multiselect, then click "Run screen".
+    at.multiselect[0].set_value([]).run()
+    run_btn = [b for b in at.button if b.label == "运行筛选"][0]
+    run_btn.click().run()
+    assert not at.exception, f"render raised: {at.exception}"
+    screen_snap = at.session_state["research_store"]["screen"]
+    assert screen_snap is not None and screen_snap["available"] is False
+
+
+def test_ledger_view_writes_snapshot():
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["active_view"] = "ledger"
+    at.session_state["view_radio"] = "ledger"
+    at.run()
+    assert not at.exception, f"render raised: {at.exception}"
+    led = at.session_state["research_store"]["ledger"]
+    assert led is not None and "available" in led  # the view always records a snapshot
+
+
 def test_ml_plain_render_does_not_call_provider(monkeypatch):
     called = {"ml": 0}
 

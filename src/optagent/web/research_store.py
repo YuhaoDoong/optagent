@@ -81,6 +81,27 @@ def _defang_injection(text: str) -> str:
     return _INJECTION_RE.sub(_ins, text)
 
 
+def _compact_seq(value: Any, limit: int) -> list[Any]:
+    """Coerce a possibly-malformed nested value into a bounded list.
+
+    Lists/tuples are sliced; None becomes []; anything else (a scalar or a
+    non-subscriptable object) is wrapped in a single-element list so later
+    `json_safe` can stringify it — never raising before coercion.
+    """
+
+    if isinstance(value, (list, tuple)):
+        return list(value)[:limit]
+    if value is None:
+        return []
+    return [value]
+
+
+def _field(obj: Any, key: str) -> Any:
+    """Safe field access — returns None when `obj` is not a mapping."""
+
+    return obj.get(key) if isinstance(obj, Mapping) else None
+
+
 def neutralize_text(text: Any) -> str:
     """Make a possibly-untrusted string safe to embed in a context block.
 
@@ -140,6 +161,35 @@ def serialize_bundle(bundle: Mapping[str, Any] | None, *, max_chars: int = MAX_C
     return _wrap_bounded(neutralize_text(payload), max_chars)
 
 
+def sanitize_context_block(block: str | None, *, max_chars: int = MAX_CONTEXT_CHARS) -> str:
+    """Enforce the grounding-block contract at the LLM boundary.
+
+    A well-formed neutralized block (the output of `build_context` /
+    `serialize_bundle`) is returned unchanged. Anything else — oversized,
+    missing/duplicated wrapper, or containing RAW angle brackets (a
+    delimiter-breakout attempt) — is treated as untrusted text and re-wrapped
+    through `serialize_bundle`, so the provider can never receive an unbounded
+    or breakout block regardless of what a caller passed.
+    """
+
+    if not block:
+        return ""
+    well_formed = (
+        len(block) <= max_chars
+        and block.startswith(_OPEN)
+        and block.rstrip().endswith(_CLOSE)
+        and block.count(_OPEN) == 1
+        and block.count(_CLOSE) == 1
+        # A neutralized body uses &lt;/&gt;, so the ONLY raw angle brackets are
+        # the two from the single delimiter pair.
+        and block.count("<") == 2
+        and block.count(">") == 2
+    )
+    if well_formed:
+        return block
+    return serialize_bundle({"provided_context": block}, max_chars=max_chars)
+
+
 # ---------------------------------------------------------------------------
 # Store
 
@@ -197,12 +247,12 @@ def screen_snapshot(
                 "n_evaluated": res.get("n_evaluated"),
                 "signals": [
                     {
-                        "ticker": s.get("ticker"),
-                        "direction": s.get("direction"),
-                        "score": s.get("score"),
-                        "notes": (s.get("notes") or [])[:3],
+                        "ticker": _field(s, "ticker"),
+                        "direction": _field(s, "direction"),
+                        "score": _field(s, "score"),
+                        "notes": _compact_seq(_field(s, "notes"), 3),
                     }
-                    for s in (res.get("signals") or [])[:10]
+                    for s in _compact_seq(res.get("signals"), 10)
                 ],
                 "stale_tickers": stale_tickers,
             }
@@ -233,27 +283,27 @@ def analysis_snapshot(
     snap["candidates"] = json_safe(
         [
             {
-                "occ_symbol": c.get("occ_symbol"),
-                "right": c.get("right"),
-                "strike": c.get("strike"),
-                "mid": c.get("mid"),
-                "delta": c.get("delta"),
-                "iv": c.get("iv"),
-                "breakeven": c.get("breakeven"),
-                "max_loss": c.get("max_loss"),
+                "occ_symbol": _field(c, "occ_symbol"),
+                "right": _field(c, "right"),
+                "strike": _field(c, "strike"),
+                "mid": _field(c, "mid"),
+                "delta": _field(c, "delta"),
+                "iv": _field(c, "iv"),
+                "breakeven": _field(c, "breakeven"),
+                "max_loss": _field(c, "max_loss"),
             }
-            for c in (candidates or [])[:8]
+            for c in _compact_seq(candidates, 8)
         ]
     )
     # Compact upstream-status summary so chat can cite data provenance/freshness.
     snap["sources"] = json_safe(
         [
             {
-                "source": e.get("source"),
-                "confidence": e.get("confidence"),
-                "as_of": e.get("as_of"),
+                "source": _field(e, "source"),
+                "confidence": _field(e, "confidence"),
+                "as_of": _field(e, "as_of"),
             }
-            for e in (envelopes or [])[:10]
+            for e in _compact_seq(envelopes, 10)
         ]
     )
     return snap
@@ -433,6 +483,7 @@ def build_context(
 
     zh = lang == "zh"
     missing = "(无数据)" if zh else "(not available)"
+    na = "无数据" if zh else "not available"
     stale_tag = " [stale]"
 
     lines: list[str] = []
@@ -441,11 +492,22 @@ def build_context(
     def section(title_en: str, title_zh: str) -> str:
         return (title_zh if zh else title_en)
 
+    def unavailable_line(snap: Mapping[str, Any], label: str = "") -> str:
+        """A timestamped not-available line for a snapshot that EXISTS but is
+        unavailable (a failed/empty attempt), distinct from a never-run section."""
+
+        tag = stale_tag if _is_stale_for_grounding(snap, now_iso, max_age_s) else ""
+        ca = escape_untrusted(snap.get("computed_at"))
+        prefix = f"{label}: " if label else ""
+        return f"{prefix}{na} (computed_at={ca}{tag})"
+
     # --- Screen ---
     screen = store.get("screen")
     lines.append(section("## Market screen", "## 市场筛选"))
-    if not screen or not screen.get("available"):
+    if not screen:
         lines.append(missing)
+    elif not screen.get("available"):
+        lines.append(unavailable_line(screen))
     else:
         tag = stale_tag if _is_stale_for_grounding(screen, now_iso, max_age_s) else ""
         lines.append(f"computed_at: {escape_untrusted(screen.get('computed_at'))}{tag}")
@@ -475,8 +537,6 @@ def build_context(
                     f"score={escape_untrusted(s.get('score'))}"
                     + (f" notes=[{notes}]" if notes else "")
                 )
-
-    na = "not available" if not zh else "无数据"
 
     # --- Analysis (per ticker) — newest-first; unavailable shown explicitly ---
     lines.append(section("## Single-stock analysis", "## 单股票分析"))
@@ -527,8 +587,10 @@ def build_context(
     # --- Ledger ---
     lines.append(section("## Audit ledger", "## 审计账本"))
     ledger = store.get("ledger")
-    if not ledger or not ledger.get("available"):
+    if not ledger:
         lines.append(missing)
+    elif not ledger.get("available"):
+        lines.append(unavailable_line(ledger))
     else:
         tag = stale_tag if _is_stale_for_grounding(ledger, now_iso, max_age_s) else ""
         counts = ", ".join(

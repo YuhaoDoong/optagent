@@ -282,7 +282,14 @@ def chat_complete(
         used_model = model or _DEFAULT_MODELS[chosen]
 
     system = build_system_prompt(lang, disclaimer)
-    ctx_block = context_block if context_block is not None else build_context_block(context_bundle)
+    raw_block = context_block if context_block is not None else build_context_block(context_bundle)
+    # Enforce the grounding-block contract at the LLM boundary: any caller-
+    # supplied block is validated (and re-wrapped if malformed/oversized/
+    # breakout) so the provider never receives an unbounded or delimiter-
+    # breakout context, even via the prebuilt context_block path.
+    from .research_store import sanitize_context_block
+
+    ctx_block = sanitize_context_block(raw_block)
     messages = build_messages(history, user_message, ctx_block)
 
     if chosen == "anthropic":

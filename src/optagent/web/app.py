@@ -643,24 +643,25 @@ def _tab_screen(lang: str = "en") -> None:
             if c2.button(t("screen.drill_ml", lang), key=f"drill_ml_{tk}"):
                 _drilldown(tk, "ml")
 
-        # Opt-in LLM explanation.
-        if st.button(t("screen.explain_btn", lang), key="explain_screen_btn"):
-            try:
-                from optagent.web.screen_llm import explain_screen
+    # Opt-in LLM explanation — available after ANY completed screen, even when
+    # the deterministic synthesis is empty but per-strategy results exist.
+    if st.button(t("screen.explain_btn", lang), key="explain_screen_btn"):
+        try:
+            from optagent.web.screen_llm import explain_screen
 
-                with st.spinner(t("screen.explain_spinner", lang)):
-                    prose = explain_screen(
-                        _store().get("screen"),
-                        lang=lang,
-                        provider=st.session_state.get("provider_override"),
-                    )
-                st.subheader(t("screen.explain_title", lang))
-                st.markdown(prose)
-            except RuntimeError as e:
-                if "No LLM provider configured" in str(e):
-                    st.error(t("chat.no_llm", lang))
-                else:
-                    st.error(t("chat.error", lang, err=str(e)))
+            with st.spinner(t("screen.explain_spinner", lang)):
+                prose = explain_screen(
+                    _store().get("screen"),
+                    lang=lang,
+                    provider=st.session_state.get("provider_override"),
+                )
+            st.subheader(t("screen.explain_title", lang))
+            st.markdown(prose)
+        except RuntimeError as e:
+            if "No LLM provider configured" in str(e):
+                st.error(t("chat.no_llm", lang))
+            else:
+                st.error(t("chat.error", lang, err=str(e)))
 
     # --- Per-strategy result tables + diagnostics ---
     st.subheader(t("screen.per_strategy_title", lang))
