@@ -37,14 +37,24 @@ def test_cli_help_lists_analyze():
 
 
 def test_cli_does_not_expose_order_placement_verb():
-    """Compile-time absence of order-placement code (AC-5 grep test)."""
+    """Recursive absence of order-placement verbs anywhere under src/.
+
+    Mirrors the plan's `grep -rE "place_order|submit_order|new_order" src/`
+    invariant: scans ALL committed text files (not just *.py), skipping only
+    generated *.egg-info metadata (gitignored, not part of the source).
+    """
 
     src_dir = REPO_ROOT / "src"
-    hits: list[Path] = []
-    for path in src_dir.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
+    hits: list[str] = []
+    for path in src_dir.rglob("*"):
+        if not path.is_file() or any(p.endswith(".egg-info") for p in path.parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue  # binary / unreadable — not source we ship verbs in
         for forbidden in ("place_order", "submit_order", "new_order"):
             if forbidden in text:
-                hits.append(path)
+                hits.append(f"{path}:{forbidden}")
                 break
     assert hits == [], f"order-placement verb found in: {hits}"

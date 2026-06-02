@@ -81,22 +81,63 @@ def _defang_injection(text: str) -> str:
     return _INJECTION_RE.sub(_ins, text)
 
 
-def escape_untrusted(text: Any, *, cap: int = _FIELD_CAP) -> str:
-    """Neutralize a possibly-untrusted string for inclusion in the context.
+def neutralize_text(text: Any) -> str:
+    """Make a possibly-untrusted string safe to embed in a context block.
 
     Strips control characters, escapes angle brackets (so embedded text can
-    never open/close the `<analysis_context>` delimiter or any pseudo-tag),
-    defangs common instruction-injection phrases, and truncates to `cap`
-    characters. Non-strings are stringified first.
+    never open/close the `<analysis_context>` delimiter or any pseudo-tag), and
+    defangs common instruction-injection phrases. No length cap — callers apply
+    their own. Non-strings are stringified first.
     """
 
     s = text if isinstance(text, str) else str(text)
     s = "".join(c for c in s if c >= " " or c in "\n\t")
     s = s.replace("<", "&lt;").replace(">", "&gt;")
-    s = _defang_injection(s)
+    return _defang_injection(s)
+
+
+def escape_untrusted(text: Any, *, cap: int = _FIELD_CAP) -> str:
+    """`neutralize_text` plus a per-field length cap (for line-oriented use)."""
+
+    s = neutralize_text(text)
     if len(s) > cap:
         s = s[:cap] + "…"
     return s
+
+
+def _wrap_bounded(body: str, max_chars: int) -> str:
+    """Wrap `body` in the `<analysis_context>` delimiters, guaranteeing the
+    WHOLE result is <= max_chars AND the wrapper stays well-formed.
+
+    Truncates the body (never the delimiters). Raises ValueError if `max_chars`
+    is too small to hold even an empty wrapped block — we refuse to emit a
+    partial/closing-tag-less delimiter rather than ship malformed prompt
+    framing.
+    """
+
+    overhead = len(_OPEN) + len(_CLOSE) + 2  # the two newlines around the body
+    if max_chars < overhead:
+        raise ValueError(
+            f"max_chars={max_chars} too small for a valid wrapped block "
+            f"(need >= {overhead})"
+        )
+    budget = max_chars - overhead
+    if len(body) > budget:
+        marker = "\n…(truncated)"
+        body = body[: budget - len(marker)] + marker if budget > len(marker) else body[:budget]
+    return f"{_OPEN}\n{body}\n{_CLOSE}"
+
+
+def serialize_bundle(bundle: Mapping[str, Any] | None, *, max_chars: int = MAX_CONTEXT_CHARS) -> str:
+    """One bounded, sanitized, single-wrapper serializer for an arbitrary dict.
+
+    Reused on every LLM grounding path (chat legacy bundle fallback + screen
+    explanation) so untrusted text is always neutralized, the block is always
+    bounded, and there is always exactly one well-formed delimiter pair.
+    """
+
+    payload = json.dumps(json_safe(dict(bundle or {})), ensure_ascii=False, indent=2)
+    return _wrap_bounded(neutralize_text(payload), max_chars)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +223,9 @@ def analysis_snapshot(
     envelopes: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not ticker:
-        return _base_snapshot("analysis", computed_at, available=False, stale=False)
+        snap = _base_snapshot("analysis", computed_at, available=False, stale=False)
+        snap["inputs"] = json_safe(dict(inputs or {}))
+        return snap
     snap = _base_snapshot("analysis", computed_at, available=verdict is not None, stale=False)
     snap["ticker"] = ticker
     snap["inputs"] = json_safe(dict(inputs or {}))
@@ -223,7 +266,9 @@ def ml_snapshot(
     inputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not ticker:
-        return _base_snapshot("ml", computed_at, available=False, stale=False)
+        snap = _base_snapshot("ml", computed_at, available=False, stale=False)
+        snap["inputs"] = json_safe(dict(inputs or {}))
+        return snap
     snap = _base_snapshot("ml", computed_at, available=ml is not None, stale=False)
     snap["ticker"] = ticker
     snap["inputs"] = json_safe(dict(inputs or {"ticker": ticker}))
@@ -232,9 +277,13 @@ def ml_snapshot(
 
 
 def ledger_summary_snapshot(
-    action_counts: Mapping[str, int] | None, n_rows: int, computed_at: str
+    action_counts: Mapping[str, int] | None,
+    n_rows: int,
+    computed_at: str,
+    inputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     snap = _base_snapshot("ledger", computed_at, available=bool(action_counts), stale=False)
+    snap["inputs"] = json_safe(dict(inputs or {}))
     snap["n_rows"] = int(n_rows or 0)
     snap["action_counts"] = json_safe(dict(action_counts or {}))
     return snap
@@ -298,11 +347,17 @@ def synthesise_cross_strategy(
             continue
         signals = list(res.get("signals") or [])
         stale = set(res.get("stale_tickers") or [])
-        scored = [
-            (s.get("ticker"), float(s.get("score") or 0.0), s.get("direction"))
-            for s in signals
-            if s.get("ticker") and s.get("ticker") not in stale
-        ]
+        # Deduplicate each strategy's signals by ticker BEFORE scoring so one
+        # strategy contributes at most once per ticker (keep the strongest row).
+        best_by_ticker: dict[str, tuple[float, Any]] = {}
+        for s in signals:
+            tk = s.get("ticker")
+            if not tk or tk in stale:
+                continue
+            score = float(s.get("score") or 0.0)
+            if tk not in best_by_ticker or abs(score) > abs(best_by_ticker[tk][0]):
+                best_by_ticker[tk] = (score, s.get("direction"))
+        scored = [(tk, sc, d) for tk, (sc, d) in best_by_ticker.items()]
         if not scored:
             continue
         max_score = max((abs(sc) for _t, sc, _d in scored), default=0.0)
@@ -330,6 +385,18 @@ def synthesise_cross_strategy(
 
 # ---------------------------------------------------------------------------
 # Grounding context
+
+
+def _newest_first(d: Mapping[str, Mapping[str, Any]]) -> list[tuple[str, Mapping[str, Any]]]:
+    """Per-ticker snapshots sorted by computed_at DESC, ticker ASC tie-break.
+
+    Ensures the chat grounds on the LATEST attempt per view (available or not),
+    and that the newest of more-than-N tickers is never dropped by a cap.
+    """
+
+    items = sorted((d or {}).items(), key=lambda kv: kv[0])  # ticker asc
+    items.sort(key=lambda kv: str(kv[1].get("computed_at") or ""), reverse=True)  # stable
+    return items
 
 
 def _is_stale_for_grounding(snap: Mapping[str, Any], now_iso: str | None, max_age_s: int) -> bool:
@@ -409,14 +476,20 @@ def build_context(
                     + (f" notes=[{notes}]" if notes else "")
                 )
 
-    # --- Analysis (per ticker) — available entries only ---
+    na = "not available" if not zh else "无数据"
+
+    # --- Analysis (per ticker) — newest-first; unavailable shown explicitly ---
     lines.append(section("## Single-stock analysis", "## 单股票分析"))
-    analysis = {k: v for k, v in (store.get("analysis") or {}).items() if v and v.get("available")}
+    analysis = _newest_first(store.get("analysis") or {})
     if not analysis:
         lines.append(missing)
     else:
-        for ticker, snap in list(analysis.items())[:5]:
+        for ticker, snap in analysis[:5]:
             tag = stale_tag if _is_stale_for_grounding(snap, now_iso, max_age_s) else ""
+            ca = escape_untrusted(snap.get("computed_at"))
+            if not snap.get("available"):
+                lines.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
+                continue
             v = snap.get("verdict") or {}
             srcs = ",".join(
                 escape_untrusted(s.get("source")) for s in (snap.get("sources") or [])[:6]
@@ -426,27 +499,29 @@ def build_context(
             )
             lines.append(
                 f"  {escape_untrusted(ticker)}: verdict={escape_untrusted(v.get('action'))} "
-                f"skip_reason={escape_untrusted(v.get('skip_reason'))} "
-                f"computed_at={escape_untrusted(snap.get('computed_at'))}{tag}"
+                f"skip_reason={escape_untrusted(v.get('skip_reason'))} computed_at={ca}{tag}"
             )
             if cands:
                 lines.append(f"      candidates=[{cands}]")
             if srcs:
                 lines.append(f"      sources=[{srcs}]")
 
-    # --- ML (per ticker) — available entries only ---
+    # --- ML (per ticker) — newest-first; unavailable shown explicitly ---
     lines.append(section("## ML direction signal", "## ML 方向信号"))
-    ml = {k: v for k, v in (store.get("ml") or {}).items() if v and v.get("available")}
+    ml = _newest_first(store.get("ml") or {})
     if not ml:
         lines.append(missing)
     else:
-        for ticker, snap in list(ml.items())[:5]:
-            sig = snap.get("signal") or {}
+        for ticker, snap in ml[:5]:
             tag = stale_tag if _is_stale_for_grounding(snap, now_iso, max_age_s) else ""
+            ca = escape_untrusted(snap.get("computed_at"))
+            if not snap.get("available"):
+                lines.append(f"  {escape_untrusted(ticker)}: {na} (computed_at={ca}{tag})")
+                continue
+            sig = snap.get("signal") or {}
             lines.append(
                 f"  {escape_untrusted(ticker)}: prob_up={escape_untrusted(sig.get('prob_up'))} "
-                f"credibility={escape_untrusted(sig.get('credibility'))} "
-                f"computed_at={escape_untrusted(snap.get('computed_at'))}{tag}"
+                f"credibility={escape_untrusted(sig.get('credibility'))} computed_at={ca}{tag}"
             )
 
     # --- Ledger ---
@@ -465,17 +540,6 @@ def build_context(
             f"computed_at={escape_untrusted(ledger.get('computed_at'))}{tag} verdicts: {counts}"
         )
 
-    body = "\n".join(lines)
-    # Bound the WHOLE returned string (delimiters included) to max_chars.
-    trunc = "\n…(truncated)"
-    overhead = len(_OPEN) + len(_CLOSE) + 2  # two newlines around the body
-    budget = max_chars - overhead
-    if len(body) > budget:
-        body = body[: max(0, budget - len(trunc))] + trunc
-    result = f"{_OPEN}\n{body}\n{_CLOSE}"
-    # Hard backstop: never exceed the configured cap for ANY cap, even ones
-    # smaller than the delimiter overhead (the graceful budget path above
-    # assumes max_chars > overhead).
-    if len(result) > max_chars:
-        result = result[:max_chars]
-    return result
+    # Bound the whole block while keeping the wrapper well-formed (raises if the
+    # cap is too small to hold even an empty wrapped block).
+    return _wrap_bounded("\n".join(lines), max_chars)

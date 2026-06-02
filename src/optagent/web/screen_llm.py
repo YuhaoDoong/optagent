@@ -15,11 +15,10 @@ the LLM returns prose only and is never asked for a verdict or a ranking.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Mapping
 
 from .chat import chat_complete
-from .research_store import json_safe
+from .research_store import serialize_bundle
 
 
 # Cap on the serialized snapshot grounding (chars). Keeps the opt-in
@@ -62,11 +61,9 @@ def build_snapshot_context_block(screen_snapshot: Mapping[str, Any] | None) -> s
     note text cannot close the delimiter or inject a pseudo-tag.
     """
 
-    payload = json.dumps(json_safe(dict(screen_snapshot or {})), ensure_ascii=False, indent=2)
-    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e")
-    if len(payload) > _CONTEXT_CAP:
-        payload = payload[:_CONTEXT_CAP] + "\n…(truncated)"
-    return f"<analysis_context>\n{payload}\n</analysis_context>"
+    # Centralized bounded + sanitized serializer: neutralizes angle brackets
+    # AND semantic injection phrases, and guarantees one well-formed wrapper.
+    return serialize_bundle(screen_snapshot, max_chars=_CONTEXT_CAP)
 
 
 def explain_screen(

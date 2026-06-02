@@ -69,3 +69,24 @@ def test_analyze_plain_render_does_not_call_provider(monkeypatch):
     at.run()
     assert not at.exception, f"render raised: {at.exception}"
     assert called["analyze"] == 0
+
+
+def test_ml_plain_render_does_not_call_provider(monkeypatch):
+    called = {"ml": 0}
+
+    class _SpyAdapter:
+        def __init__(self, *a, **k):
+            called["ml"] += 1
+
+        def signal(self, *a, **k):
+            called["ml"] += 1
+            return None
+
+    monkeypatch.setattr("optagent.ml.MLDirectionAdapter", _SpyAdapter)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["active_view"] = "ml"
+    at.session_state["view_radio"] = "ml"
+    # No pending_drilldown and the Compute-signal button is not pressed.
+    at.run()
+    assert not at.exception, f"render raised: {at.exception}"
+    assert called["ml"] == 0

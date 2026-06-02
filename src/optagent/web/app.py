@@ -577,12 +577,20 @@ def _tab_screen(lang: str = "en") -> None:
     with col3:
         limit = st.number_input(t("screen.limit_label", lang), min_value=1, max_value=20, value=5)
 
+    def _fail_screen(inputs: dict[str, Any]) -> None:
+        # A failed/empty screen attempt must overwrite prior successful grounding
+        # so the chat panel never treats stale results as the latest screen.
+        st.session_state["last_screen"] = None
+        _store()["screen"] = rs.screen_snapshot({}, None, _now_iso(), inputs=inputs)
+
     if st.button(t("screen.run_btn", lang), type="primary"):
         if not strategy_ids:
+            _fail_screen({"strategies": [], "sector": sector, "limit": int(limit)})
             st.warning(t("screen.select_prompt", lang))
         else:
             universe = _build_universe(sector, sector_any)
             if not universe:
+                _fail_screen({"strategies": strategy_ids, "sector": sector, "limit": int(limit)})
                 st.warning(t("screen.sector_empty_warning", lang, sector=sector))
             else:
                 with st.spinner(
@@ -766,9 +774,10 @@ def _tab_ledger(lang: str = "en") -> None:
 
     from pathlib import Path as _P
 
+    ledger_inputs = {"days_back": int(days_back), "ledger_dir": ledger_dir}
     df = ledger_index(_P(ledger_dir), days_back=int(days_back))
     if df.empty:
-        _store()["ledger"] = rs.ledger_summary_snapshot(None, 0, _now_iso())
+        _store()["ledger"] = rs.ledger_summary_snapshot(None, 0, _now_iso(), inputs=ledger_inputs)
         st.info(t("ledger.empty", lang))
         return
 
@@ -790,6 +799,7 @@ def _tab_ledger(lang: str = "en") -> None:
         {str(r["action"]): int(r["count"]) for _i, r in counts.iterrows()},
         len(df),
         _now_iso(),
+        inputs=ledger_inputs,
     )
 
 

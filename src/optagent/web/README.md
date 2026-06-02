@@ -135,5 +135,5 @@ Every page renders the canonical disclaimer banner at the top. The
 underlying calls (`analyze()`, `screen_universe()`, `MLDirectionAdapter`)
 all go through the same fail-closed validator and bounded-verdict enum
 as the CLI — no UI feature can promote a SKIP into a LONG verdict, and
-no UI page contains the strings `place_order` / `submit_order` /
-`new_order` (CI grep test still active).
+no UI page exposes any order-placement verb (place/submit/new-order); the
+recursive grep invariant test over `src/` stays active.
