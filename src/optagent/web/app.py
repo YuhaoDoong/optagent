@@ -478,7 +478,7 @@ def _tab_screen(lang: str = "en") -> None:
     with st.spinner(t("screen.spinner", lang, strategy=strategy_id, n=len(universe))):
         result = screen_universe(strategy, universe, top_n=int(limit))
 
-    col_l, col_r = st.columns(3)
+    col_l, col_r = st.columns(2)
     col_l.metric(t("screen.metric_universe", lang), result.universe_size)
     col_l.metric(t("screen.metric_evaluated", lang), result.n_evaluated)
     col_r.metric(t("screen.metric_triggered", lang), result.n_triggered, delta=None)
